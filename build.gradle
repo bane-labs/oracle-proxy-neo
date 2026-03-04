@@ -20,6 +20,9 @@ sourceSets {
     deploy {
         compileClasspath += sourceSets.main.output
         runtimeClasspath += sourceSets.main.output
+        resources {
+            srcDirs = ['src/deploy/resources']
+        }
     }
     main {
         runtimeClasspath += sourceSets.deploy.runtimeClasspath
@@ -36,7 +39,8 @@ dependencies {
     deployImplementation 'io.neow3j:compiler:3.24.0',
             'io.neow3j:devpack:3.24.0',
             'io.neow3j:contract:3.24.0',
-            'ch.qos.logback:logback-classic:1.2.11'
+            'ch.qos.logback:logback-classic:1.3.4',
+            'io.github.cdimascio:dotenv-java:3.0.0'
 }
 
 tasks.withType(Test).configureEach {
@@ -57,4 +61,38 @@ tasks.named('run', JavaExec) {
     // Ensure we can run classes from the deploy sourceset too.
     classpath = sourceSets.deploy.runtimeClasspath
     mainClass.set(project.property('mainClass').toString())
+}
+
+// Deploy task for OracleProxy contract
+task deploy(type: JavaExec) {
+    description = 'Deploy the OracleProxy contract with deployment data'
+    group = 'deployment'
+
+    dependsOn 'neow3jCompile'
+
+    classpath = sourceSets.deploy.runtimeClasspath
+    mainClass = 'axlabs.com.oracleproxy.DeployOracleProxy'
+
+    // Pass through system properties
+    systemProperties System.getProperties()
+
+    // Pass through environment variables
+    environment System.getenv()
+}
+
+// Upgrade task for OracleProxy contract
+task upgrade(type: JavaExec) {
+    description = 'Upgrade the already-deployed OracleProxy contract (requires -PcontractHash=<hash>)'
+    group = 'deployment'
+
+    dependsOn 'neow3jCompile'
+
+    classpath = sourceSets.deploy.runtimeClasspath
+    mainClass = 'axlabs.com.oracleproxy.UpgradeOracleProxy'
+
+    // Pass through system properties
+    systemProperties System.getProperties()
+
+    // Pass through environment variables
+    environment System.getenv()
 }

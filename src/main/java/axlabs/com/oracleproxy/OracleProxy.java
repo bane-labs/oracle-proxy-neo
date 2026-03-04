@@ -136,6 +136,7 @@ public class OracleProxy {
             int nonce,
             int requestId
     ) {
+        onlyMsgBridge();
         // Claim native tokens from the bridge using the provided nonce
         Hash160 bridgeHash = baseMap.getHash160(KEY_NATIVE_BRIDGE);
         if (bridgeHash != null && !bridgeHash.isZero()) {
@@ -484,6 +485,7 @@ public class OracleProxy {
      * 
      * @return The message bridge contract hash
      */
+    @Safe
     public static Hash160 getMessageBridge() {
         return baseMap.getHash160(KEY_MESSAGE_BRIDGE);
     }
@@ -526,6 +528,18 @@ public class OracleProxy {
         }
         
         // Payment accepted - GAS will be added to contract balance
+    }
+
+    /**
+     * Checks that the caller is the message bridge.
+     * Aborts if not authorized.
+     */
+    private static void onlyMsgBridge() {
+        Hash160 messageBridge = baseMap.getHash160(KEY_MESSAGE_BRIDGE);
+        Hash160 callingScriptHash = getCallingScriptHash();
+        if (!callingScriptHash.equals(messageBridge)) {
+            abort("No authorization - only message bridge");
+        }
     }
 
     /**

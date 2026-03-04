@@ -1,0 +1,20 @@
+<configuration>
+    <!-- Suppress logback's own internal status messages -->
+    <statusListener class="ch.qos.logback.core.status.NopStatusListener"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <target>System.out</target>
+        <encoder>
+            <pattern>%msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Silence noisy third-party loggers -->
+    <logger name="io.neow3j" level="WARN"/>
+    <logger name="okhttp3" level="WARN"/>
+    <logger name="okio" level="WARN"/>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>
