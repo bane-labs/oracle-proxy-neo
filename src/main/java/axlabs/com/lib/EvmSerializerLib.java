@@ -38,13 +38,14 @@ import static io.neow3j.devpack.Helper.toByteArray;
  * 2. Encode a function call with dynamic parameters:
  *    ByteString encodedTo = EvmSerializerLib.encodeAddress(recipient);
  *    ByteString encodedData = EvmSerializerLib.encodeBytes(data);
- *    List<ByteString> staticParams = new List<>();
- *    staticParams.add(encodedTo);
- *    staticParams.add(EvmSerializerLib.encodeUint256(0)); // Placeholder for dynamic param
+ *    List<ByteString> params = new List<>();
+ *    params.add(encodedTo);                                // param 0: address (static)
+ *    params.add(EvmSerializerLib.encodeUint256(0));        // param 1: bytes (dynamic placeholder)
+ *    int[] dynamicIndices = new int[]{1};                  // param 1 is dynamic
  *    List<ByteString> dynamicParams = new List<>();
  *    dynamicParams.add(encodedData);
  *    ByteString callData = EvmSerializerLib.encodeFunctionCallWithDynamic(
- *        cryptoLib, "transferWithData(address,bytes)", staticParams, dynamicParams);
+ *        cryptoLib, "transferWithData(address,bytes)", params, dynamicIndices, dynamicParams);
  */
 public class EvmSerializerLib {
 
@@ -260,87 +261,136 @@ public class EvmSerializerLib {
     }
 
     /**
-     * Encodes a complete EVM function call with mixed static and dynamic parameters.
-     * This handles the offset calculation for dynamic types correctly.
+     * Encodes an ABI tuple (struct) with mixed static and dynamic fields.
+     * This is the core encoding logic used by both function calls and raw struct encoding.
      * 
-     * The parameters list should contain:
-     * - For static types: the encoded parameter directly
-     * - For dynamic types: use a placeholder (e.g., encodeUint256(0)) and pass the actual
-     *   dynamic data in dynamicParams in the same order
+     * <p>Offsets for dynamic fields are relative to the start of the tuple.
      * 
-     * @param cryptoLib The CryptoLib instance for hashing
-     * @param functionSignature The function signature
-     * @param params Array of encoded parameters (static types directly, dynamic types as placeholders)
-     * @param dynamicParams Array of dynamic (variable-size) encoded parameters, in order
-     * @return The complete ABI-encoded function call
+     * @param fields Array of ALL encoded fields. Static fields contain their encoded value;
+     *               dynamic field slots can contain any placeholder (value is ignored).
+     * @param dynamicFieldIndices Indices into {@code fields} that are dynamic types, in ascending order.
+     *                            Must have the same length as {@code dynamicFields}.
+     * @param dynamicFields Array of encoded dynamic data (from encodeBytes, encodeString, etc.),
+     *                      in the same order as {@code dynamicFieldIndices}.
+     * @return The ABI-encoded tuple (no function selector)
      */
-    public static ByteString encodeFunctionCallWithDynamic(CryptoLib cryptoLib, String functionSignature,
-                                                           List<ByteString> params,
-                                                           List<ByteString> dynamicParams) {
-        // Encode function selector
-        ByteString selector = encodeFunctionSelector(cryptoLib, functionSignature);
+    public static ByteString encodeTupleWithDynamic(List<ByteString> fields,
+                                                     int[] dynamicFieldIndices,
+                                                     List<ByteString> dynamicFields) {
+        // Head area: each field takes one 32-byte slot (static value or dynamic offset)
+        int headSize = fields.size() * WORD_SIZE;
         
-        // Calculate total size of all parameter slots (each param takes 32 bytes for offset/value)
-        int paramSlotsSize = params.size() * WORD_SIZE;
+        byte[] result = new byte[0];
         
-        // EVM ABI offsets are relative to the START of the params area (i.e., right after selector).
-        // First dynamic param's data begins right after all param slots.
-        int offset = paramSlotsSize;
-        
-        // Build the encoded call
-        byte[] result = selector.toByteArray();
-        
-        // Track current offset for dynamic parameters
-        int currentOffset = offset;
+        // Track current offset for dynamic fields.
+        // Offsets are relative to the start of the tuple.
+        // Dynamic data starts right after all head slots.
+        int currentOffset = headSize;
         int dynamicIndex = 0;
         
-        // Process all parameters: static directly, dynamic as offsets
-        for (int i = 0; i < params.size(); i++) {
-            ByteString param = params.get(i);
-            byte[] paramBytes = param.toByteArray();
-            
-            // Check if this is a placeholder (all zeros, 32 bytes) - indicates dynamic param
-            boolean isPlaceholder = paramBytes.length == WORD_SIZE;
-            if (isPlaceholder) {
-                // Check if all bytes are zero
-                boolean allZero = true;
-                for (int j = 0; j < WORD_SIZE; j++) {
-                    if (paramBytes[j] != 0) {
-                        allZero = false;
-                        break;
-                    }
+        // Build head: static values directly, dynamic fields as offset pointers
+        for (int i = 0; i < fields.size(); i++) {
+            boolean isDynamic = false;
+            if (dynamicIndex < dynamicFieldIndices.length && dynamicFieldIndices[dynamicIndex] == i) {
+                isDynamic = true;
                 }
                 
-                if (allZero && dynamicIndex < dynamicParams.size()) {
-                    // This is a dynamic parameter placeholder - replace with offset
+            if (isDynamic) {
+                // Replace placeholder with offset pointing to dynamic data
                     byte[] offsetBytes = toByteArray(currentOffset);
                     reverse(offsetBytes);
                     byte[] paddedOffset = padLeft(offsetBytes, WORD_SIZE);
                     result = concat(result, paddedOffset);
                     
-                    // Update offset for next dynamic parameter
-                    ByteString dynamicParam = dynamicParams.get(dynamicIndex);
-                    int dynamicParamSize = dynamicParam.toByteArray().length;
-                    currentOffset += dynamicParamSize;
+                // Advance offset past this dynamic field's data
+                ByteString dynamicField = dynamicFields.get(dynamicIndex);
+                currentOffset += dynamicField.toByteArray().length;
                     dynamicIndex++;
-                } else {
-                    // Not a placeholder, add as-is
-                    result = concat(result, paramBytes);
-                }
             } else {
-                // Static parameter, add as-is
-                result = concat(result, paramBytes);
+                // Static field, add as-is
+                result = concat(result, fields.get(i).toByteArray());
             }
         }
         
-        // Add dynamic parameter data at the end
-        for (int i = 0; i < dynamicParams.size(); i++) {
-            result = concat(result, dynamicParams.get(i).toByteArray());
+        // Append dynamic field data (tails)
+        for (int i = 0; i < dynamicFields.size(); i++) {
+            result = concat(result, dynamicFields.get(i).toByteArray());
         }
         
         return new ByteString(result);
     }
     
+    /**
+     * Encodes a complete EVM function call with mixed static and dynamic parameters.
+     * This is {@code [selector (4 bytes)] + encodeTupleWithDynamic(...)}.
+     * 
+     * @param cryptoLib The CryptoLib instance for hashing
+     * @param functionSignature The function signature (e.g., "transfer(address,bytes)")
+     * @param params Array of ALL encoded parameters. Static params contain their encoded value;
+     *               dynamic param slots can contain any placeholder (value is ignored).
+     * @param dynamicParamIndices Indices into {@code params} that are dynamic types, in ascending order.
+     *                            Must have the same length as {@code dynamicParams}.
+     * @param dynamicParams Array of encoded dynamic data (from encodeBytes, encodeString, etc.),
+     *                      in the same order as {@code dynamicParamIndices}.
+     * @return The complete ABI-encoded function call
+     */
+    public static ByteString encodeFunctionCallWithDynamic(CryptoLib cryptoLib, String functionSignature,
+                                                           List<ByteString> params,
+                                                           int[] dynamicParamIndices,
+                                                           List<ByteString> dynamicParams) {
+        ByteString selector = encodeFunctionSelector(cryptoLib, functionSignature);
+        ByteString tupleEncoding = encodeTupleWithDynamic(params, dynamicParamIndices, dynamicParams);
+        return new ByteString(concat(selector.toByteArray(), tupleEncoding.toByteArray()));
+    }
+    
+
+    // =========================================================================
+    //                     AMBTypes.Call ENCODING
+    // =========================================================================
+
+    /**
+     * ABI-encodes an {@code AMBTypes.Call} struct the way Go's {@code abi.Pack} produces it.
+     * <pre>
+     *   (address target, bool allowFailure, uint256 value, bytes callData)
+     * </pre>
+     * The encoding includes the outer offset word that Go's {@code abi.Pack} prepends for a
+     * dynamic struct argument.
+     *
+     * @param evmTargetAddress 20-byte big-endian EVM address of the target contract
+     * @param allowFailure     Whether the call is allowed to fail
+     * @param value            The ETH value to send with the call (in wei)
+     * @param callData         The already-encoded EVM calldata
+     * @return The full ABI-encoded AMBTypes.Call with outer offset word
+     */
+    public static ByteString encodeAmbTypesCall(ByteString evmTargetAddress, boolean allowFailure,
+                                                 int value, ByteString callData) {
+        if (evmTargetAddress == null || evmTargetAddress.length() != 20) {
+            abort("Invalid EVM target address (expected 20 bytes)");
+        }
+
+        // Outer offset = 32  (Go abi.Pack wraps a dynamic struct in an offset word)
+        ByteString outerOffset = encodeUint256(32);
+
+        // Target: 20-byte EVM address, left-padded with 12 zero bytes to fill 32 bytes
+        ByteString paddedTarget = new ByteString(concat(new byte[12], evmTargetAddress.toByteArray()));
+
+        // Struct fields: (address target, bool allowFailure, uint256 value, bytes callData)
+        List<ByteString> fields = new List<>();
+        fields.add(paddedTarget);              // 0: address (static)
+        fields.add(encodeBool(allowFailure));   // 1: bool    (static)
+        fields.add(encodeUint256(value));        // 2: uint256 (static)
+        fields.add(encodeUint256(0));            // 3: bytes   (dynamic placeholder)
+
+        int[] dynamicIndices = new int[]{3};
+
+        List<ByteString> dynamicData = new List<>();
+        dynamicData.add(encodeBytes(callData));
+
+        ByteString ambTuple = encodeTupleWithDynamic(fields, dynamicIndices, dynamicData);
+
+        // Prepend outerOffset word (Go abi.Pack wrapping)
+        return new ByteString(concat(outerOffset.toByteArray(), ambTuple.toByteArray()));
+    }
 
     // =========================================================================
     //                     APPEND ARG (GAS-EFFICIENT PATTERN)

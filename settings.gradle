@@ -1,1 +1,9 @@
+pluginManagement {
+    repositories {
+        maven { url "https://central.sonatype.com/repository/maven-snapshots/" }
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+
 rootProject.name = 'oracle-proxy-neo'

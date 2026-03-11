@@ -30,20 +30,20 @@ oracle-proxy-neo/
 ## Setup
 
 1. Clone the repository:
-   ```bash
+```bash
    git clone <repository-url>
    cd oracle-proxy-neo
-   ```
+```
 
 2. Build the project:
-   ```bash
-   ./gradlew build
-   ```
+```bash
+./gradlew build
+```
 
-   Or on Windows:
-   ```bash
-   gradlew.bat build
-   ```
+Or on Windows:
+```bash
+gradlew.bat build
+```
 
 ## Compilation
 
@@ -161,24 +161,24 @@ Set the following environment variables for deployment:
    export N3_OWNER_ADDRESS="NRozNKnv4aSMEUL3KyD4UyeHoiPdLpi4y6"
    
    # Run deployment (if deployment script exists)
-   ```
+```
 
 ### Post-Deployment Configuration
 
 After deployment, configure the contract:
 
 1. **Set Message Bridge Address:**
-   ```bash
+```bash
    # Call setMessageBridge() method with the message bridge contract hash
-   ```
+```
 
 2. **Set Native Bridge Address:**
-   ```bash
+```bash
    # Call setNativeBridge() method with the native bridge contract hash
-   ```
+```
 
 3. **Verify Configuration:**
-   ```bash
+```bash
    # Call getMessageBridge() to verify message bridge is set
    # Call getBridge() to verify native bridge is set
    # Call owner() to verify owner is set

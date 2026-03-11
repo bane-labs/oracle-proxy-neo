@@ -1,7 +1,7 @@
 plugins {
     id 'java'
     id 'application'
-    id 'io.neow3j.gradle-plugin' version '3.24.0'
+    id 'io.neow3j.gradle-plugin' version '3.24.2-SNAPSHOT'
 }
 
 group 'axlabs.com.oracleproxy'
@@ -13,6 +13,7 @@ java {
 }
 
 repositories {
+    maven { url "https://central.sonatype.com/repository/maven-snapshots/" }
     mavenCentral()
 }
 
@@ -30,15 +31,16 @@ sourceSets {
 }
 
 dependencies {
-    implementation 'io.neow3j:devpack:3.24.0'
+    implementation 'io.neow3j:devpack:3.24.2-SNAPSHOT'
+
 
     testImplementation 'org.junit.jupiter:junit-jupiter:5.9.0',
-            'io.neow3j:devpack-test:3.24.0',
+            'io.neow3j:devpack-test:3.24.2-SNAPSHOT',
             'ch.qos.logback:logback-classic:1.3.4'
 
-    deployImplementation 'io.neow3j:compiler:3.24.0',
-            'io.neow3j:devpack:3.24.0',
-            'io.neow3j:contract:3.24.0',
+    deployImplementation 'io.neow3j:compiler:3.24.2-SNAPSHOT',
+            'io.neow3j:devpack:3.24.2-SNAPSHOT',
+            'io.neow3j:contract:3.24.2-SNAPSHOT',
             'ch.qos.logback:logback-classic:1.3.4',
             'io.github.cdimascio:dotenv-java:3.0.0'
 }
@@ -89,6 +91,40 @@ task upgrade(type: JavaExec) {
 
     classpath = sourceSets.deploy.runtimeClasspath
     mainClass = 'axlabs.com.oracleproxy.UpgradeOracleProxy'
+
+    // Pass through system properties
+    systemProperties System.getProperties()
+
+    // Pass through environment variables
+    environment System.getenv()
+}
+
+// SetMessageBridge task for OracleProxy contract
+task setMessageBridge(type: JavaExec) {
+    description = 'Set the message bridge address on the deployed OracleProxy contract (reads from .env file)'
+    group = 'deployment'
+
+    dependsOn 'neow3jCompile'
+
+    classpath = sourceSets.deploy.runtimeClasspath
+    mainClass = 'axlabs.com.oracleproxy.SetMessageBridge'
+
+    // Pass through system properties
+    systemProperties System.getProperties()
+
+    // Pass through environment variables
+    environment System.getenv()
+}
+
+// SetExecutionManager task for OracleProxy contract
+task setExecutionManager(type: JavaExec) {
+    description = 'Set the execution manager address on the deployed OracleProxy contract (reads from .env file)'
+    group = 'deployment'
+
+    dependsOn 'neow3jCompile'
+
+    classpath = sourceSets.deploy.runtimeClasspath
+    mainClass = 'axlabs.com.oracleproxy.SetExecutionManager'
 
     // Pass through system properties
     systemProperties System.getProperties()

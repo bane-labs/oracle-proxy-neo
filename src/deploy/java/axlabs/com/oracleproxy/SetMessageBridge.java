@@ -1,60 +1,55 @@
 package axlabs.com.oracleproxy;
 
-import io.neow3j.contract.ContractManagement;
-import io.neow3j.contract.NefFile;
 import io.neow3j.contract.SmartContract;
 import io.neow3j.protocol.Neow3j;
 import io.neow3j.protocol.core.response.NeoApplicationLog;
 import io.neow3j.protocol.core.response.NeoSendRawTransaction;
-import io.neow3j.protocol.core.response.ContractManifest;
 import io.neow3j.protocol.http.HttpService;
 import io.neow3j.transaction.AccountSigner;
 import io.neow3j.transaction.TransactionBuilder;
+import io.neow3j.types.ContractParameter;
 import io.neow3j.types.Hash160;
 import io.neow3j.types.Hash256;
 import io.neow3j.types.NeoVMStateType;
 import io.neow3j.wallet.Account;
 import io.neow3j.wallet.Wallet;
+import io.github.cdimascio.dotenv.Dotenv;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import io.github.cdimascio.dotenv.Dotenv;
 import java.io.File;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Paths;
 
 /**
- * Deployment script for OracleProxy contract.
- *
+ * Script to set the message bridge address on the deployed OracleProxy contract.
+ * <p>
+ * Calls the contract's {@code setMessageBridge(Hash160)} method. The caller must be the current
+ * contract owner (enforced by {@code onlyOwner()}).
+ * <p>
  * Configuration can be provided in three ways (in order of precedence):
- * 1. System properties (-Pkey=value)
+ * 1. System properties (-Pkey=value passed to Gradle)
  * 2. Environment variables
  * 3. .env file in the project root
- *
+ * <p>
  * Usage:
- *   ./gradlew deploy -Powner=<owner_address> -PexecutionManager=<execution_manager_address> [-PmessageBridge=<message_bridge_address>] [-PnativeBridge=<native_bridge_address>] [-PwalletPath=<wallet_path>] [-PwalletPassword=<wallet_password>] [-PrpcUrl=<rpc_url>] [-PdryRun=true]
- *
+ *   ./gradlew setMessageBridge -PcontractHash=<deployed_contract_hash> [-PmessageBridge=<message_bridge_address>] [-PwalletPath=<wallet_path>] [-PwalletPassword=<wallet_password>] [-PrpcUrl=<rpc_url>] [-PdryRun=true]
+ * <p>
  * Addresses can be provided in two formats:
  *   - Neo address: N... (e.g., NRozNKnv4aSMEUL3KyD4UyeHoiPdLpi4y6)
  *   - Hex hash: 0x... or without prefix (e.g., 0x1234... or 1234...)
- *
+ * <p>
  * Or create a .env file with:
- *   N3_OWNER_ADDRESS=<owner_address>  # Required (Neo address or hex hash)
- *   N3_EXECUTION_MANAGER=<execution_manager_address>  # Required (Neo address or hex hash)
- *   N3_MESSAGE_BRIDGE=<message_bridge_address>  # Optional (Neo address or hex hash)
- *   N3_NATIVE_BRIDGE=<native_bridge_address>  # Optional (Neo address or hex hash)
- *   WALLET_FILEPATH_DEPLOYER=<wallet_path>
- *   WALLET_PASSWORD_DEPLOYER=<wallet_password>  # Optional
- *   N3_JSON_RPC=<rpc_url>  # Optional, defaults to http://localhost:40332
- *   N3_HASH_FILE=<hash_file_path>  # Optional
- *   DRY_RUN=true  # Optional, if set to true, transaction will not be submitted
- *
- * Then run: ./gradlew deploy
+ *   N3_CONTRACT_HASH=<deployed_contract_hash>      # Required (Neo address or hex hash)
+ *   N3_MESSAGE_BRIDGE=<message_bridge_address>     # Required (Neo address or hex hash)
+ *   WALLET_FILEPATH_DEPLOYER=<wallet_path>         # Required
+ *   WALLET_PASSWORD_DEPLOYER=<wallet_password>      # Optional
+ *   N3_JSON_RPC=<rpc_url>                          # Optional, defaults to http://localhost:40332
+ *   DRY_RUN=true                                    # Optional
+ * <p>
+ * Then run: ./gradlew setMessageBridge
  */
-public class DeployOracleProxy {
+public class SetMessageBridge {
 
-    private static final Logger logger = LoggerFactory.getLogger(DeployOracleProxy.class);
+    private static final Logger logger = LoggerFactory.getLogger(SetMessageBridge.class);
     private static final String DEFAULT_RPC_URL = "http://localhost:40332";
     private static Dotenv dotenv = null;
 
@@ -75,151 +70,76 @@ public class DeployOracleProxy {
         }
 
         // Get configuration from system properties, environment variables, or .env file
-        String ownerAddress = getConfig("owner", "N3_OWNER_ADDRESS", true);
-        String messageBridge = getConfig("messageBridge", "N3_MESSAGE_BRIDGE", false);
-        String nativeBridge = getConfig("nativeBridge", "N3_NATIVE_BRIDGE", false);
-        String executionManager = getConfig("executionManager", "N3_EXECUTION_MANAGER", true);
+        String contractHashStr = getConfig("contractHash", "N3_CONTRACT_HASH", true);
+        String messageBridgeStr = getConfig("messageBridge", "N3_MESSAGE_BRIDGE", true);
         String walletPath = getConfig("walletPath", "WALLET_FILEPATH_DEPLOYER", true);
         String walletPassword = getConfig("walletPassword", "WALLET_PASSWORD_DEPLOYER", false);
         String rpcUrl = getConfig("rpcUrl", "N3_JSON_RPC", false);
         if (rpcUrl == null || rpcUrl.isEmpty()) {
             rpcUrl = DEFAULT_RPC_URL;
         }
-        String hashFile = getConfig("hashFile", "N3_HASH_FILE", false);
         String dryRunStr = getConfig("dryRun", "DRY_RUN", false);
         boolean dryRun = dryRunStr != null && (dryRunStr.equalsIgnoreCase("true") || dryRunStr.equals("1"));
 
         if (dryRun) {
             logger.info("=== DRY RUN MODE - Transaction will NOT be submitted ===");
         }
-        logger.info("Deploying OracleProxy contract...");
-        logger.info("RPC URL: {}", rpcUrl);
-        logger.info("Owner: {}", ownerAddress);
-        logger.info("Execution Manager: {}", executionManager);
-        if (messageBridge != null && !messageBridge.isEmpty()) {
-            logger.info("Message Bridge: {}", messageBridge);
-        } else {
-            logger.info("Message Bridge: (not set - can be set later via setMessageBridge())");
-        }
-        if (nativeBridge != null && !nativeBridge.isEmpty()) {
-            logger.info("Native Bridge: {}", nativeBridge);
-        } else {
-            logger.info("Native Bridge: (not set - can be set later via setNativeBridge())");
-        }
+        logger.info("");
+        logger.info("=== OracleProxy Set Message Bridge ===");
+        logger.info("RPC URL:         {}", rpcUrl);
+        logger.info("Contract Hash:   {}", contractHashStr);
+        logger.info("Message Bridge:  {}", messageBridgeStr);
+        logger.info("Wallet Path:     {}", walletPath);
+        logger.info("Dry Run:         {}", dryRun);
 
         // Connect to Neo3 network
         Neow3j neow3j = Neow3j.build(new HttpService(rpcUrl));
 
         // Load NEP-6 wallet and decrypt accounts
+        logger.info("");
+        logger.info("Loading wallet...");
         Wallet wallet = Wallet.fromNEP6Wallet(new File(walletPath));
         String password = walletPassword != null ? walletPassword : "";
         wallet.decryptAllAccounts(password);
         Account account = wallet.getDefaultAccount();
-        logger.info("Deployer account: {}", account.getAddress());
+        logger.info("Owner account:   {} ({})", account.getAddress(), account.getScriptHash());
 
-        // Load compiled contract files
-        String buildDir = "build/neow3j";
-        File nefFile = new File(buildDir, "OracleProxy.nef");
-        File manifestFile = new File(buildDir, "OracleProxy.manifest.json");
-
-        if (!nefFile.exists() || !manifestFile.exists()) {
-            throw new IOException("Contract files not found. Please run './gradlew neow3jCompile' first.");
-        }
-
-        NefFile nef = NefFile.readFromFile(nefFile);
-        logger.info("NEF file loaded: {} bytes", nef.toArray().length);
-        logger.info("NEF checksum: {}", nef.getCheckSumAsInteger());
-        
-        // Parse manifest using Jackson ObjectMapper from Wallet
-        String manifestJson = new String(Files.readAllBytes(manifestFile.toPath()));
-        ContractManifest manifest = Wallet.OBJECT_MAPPER.readValue(manifestJson, ContractManifest.class);
-        logger.info("Manifest loaded: {}", manifest.getName());
-        logger.info("Manifest groups: {}", manifest.getGroups().size());
-        logger.info("Manifest permissions: {}", manifest.getPermissions().size());
-
-        // Parse addresses - support both Neo addresses (N...) and hex hashes (0x...)
+        // Parse contract hash and message bridge address
+        logger.info("");
         logger.info("Parsing addresses...");
-        Hash160 owner = parseHash160(ownerAddress, "owner");
-        logger.info("Owner hash: {} ({})", owner, owner.toAddress());
-        
-        Hash160 executionManagerHash = parseHash160(executionManager, "executionManager");
-        logger.info("Execution manager hash: {} ({})", executionManagerHash, executionManagerHash.toAddress());
-        
-        Hash160 messageBridgeHash = null;
-        if (messageBridge != null && !messageBridge.isEmpty()) {
-            messageBridgeHash = parseHash160(messageBridge, "messageBridge");
-            logger.info("Message bridge hash: {} ({})", messageBridgeHash, messageBridgeHash.toAddress());
-        } else {
-            logger.info("Message bridge: not set (will use zero hash)");
-        }
-        
-        Hash160 nativeBridgeHash = null;
-        if (nativeBridge != null && !nativeBridge.isEmpty()) {
-            nativeBridgeHash = parseHash160(nativeBridge, "nativeBridge");
-            logger.info("Native bridge hash: {} ({})", nativeBridgeHash, nativeBridgeHash.toAddress());
-        } else {
-            logger.info("Native bridge: not set (will use zero hash)");
-        }
+        Hash160 contractHash = parseHash160(contractHashStr, "contractHash");
+        Hash160 messageBridge = parseHash160(messageBridgeStr, "messageBridge");
+        logger.info("Contract hash:   {} ({})", contractHash, contractHash.toAddress());
+        logger.info("Message bridge:  {} ({})", messageBridge, messageBridge.toAddress());
 
-        // Create deployment data struct
-        // The DeploymentData struct has 4 Hash160 fields: owner, nativeBridge, messageBridge, executionManager
-        // Use zero hash for optional bridges if not provided
-        Hash160 finalNativeBridge = nativeBridgeHash != null ? nativeBridgeHash : Hash160.ZERO;
-        Hash160 finalMessageBridge = messageBridgeHash != null ? messageBridgeHash : Hash160.ZERO;
-        
+        // Build the setMessageBridge invocation:
+        // setMessageBridge(Hash160 messageBridgeHash)
         logger.info("");
-        logger.info("=== Deployment Data ===");
-        logger.info("Owner:             {} ({})", owner, owner.toAddress());
-        logger.info("Native Bridge:     {} ({})", finalNativeBridge, finalNativeBridge.toAddress());
-        logger.info("Message Bridge:    {} ({})", finalMessageBridge, finalMessageBridge.toAddress());
-        logger.info("Execution Manager: {} ({})", executionManagerHash, executionManagerHash.toAddress());
+        logger.info("=== Set Message Bridge Details ===");
+        logger.info("Contract:        {} ({})", contractHash, contractHash.toAddress());
+        logger.info("Message Bridge:  {} ({})", messageBridge, messageBridge.toAddress());
         logger.info("");
+        logger.info("Building setMessageBridge transaction...");
         
-        io.neow3j.types.ContractParameter deploymentData = io.neow3j.types.ContractParameter.array(
-                io.neow3j.types.ContractParameter.hash160(owner),
-                io.neow3j.types.ContractParameter.hash160(finalNativeBridge),
-                io.neow3j.types.ContractParameter.hash160(finalMessageBridge),
-                io.neow3j.types.ContractParameter.hash160(executionManagerHash)
-        );
-
-        // Build deployment transaction using ContractManagement.
-        // AccountSigner.global is required because checkWitness() is called inside the
-        // @OnDeployment callback, which is invoked by ContractManagement (two call levels
-        // deep from the entry script). calledByEntry would not cover that depth.
-        logger.info("Building deployment transaction...");
-        TransactionBuilder builder = new ContractManagement(neow3j)
-                .deploy(nef, manifest, deploymentData)
-                .signers(AccountSigner.global(account));
-
-        // Calculate contract hash from sender, nef checksum, and manifest name
-        Hash160 contractHash = SmartContract.calcContractHash(
-                account.getScriptHash(),
-                nef.getCheckSumAsInteger(),
-                manifest.getName()
-        );
-
-        logger.info("Contract Hash (calculated): {}", contractHash);
-        logger.info("Contract Address (calculated): {}", contractHash.toAddress());
+        TransactionBuilder builder = new SmartContract(contractHash, neow3j)
+                .invokeFunction("setMessageBridge",
+                        ContractParameter.hash160(messageBridge))
+                .signers(AccountSigner.calledByEntry(account));
 
         if (dryRun) {
             logger.info("");
             logger.info("=== DRY RUN COMPLETE ===");
             logger.info("Transaction was prepared but NOT submitted to the network.");
-            logger.info("Contract Hash: {}", contractHash);
-            logger.info("Contract Address: {}", contractHash.toAddress());
+            logger.info("Contract Hash:   {}", contractHash);
+            logger.info("Contract Address:{}", contractHash.toAddress());
+            logger.info("Message Bridge:  {} ({})", messageBridge, messageBridge.toAddress());
             logger.info("");
-            logger.info("To actually deploy, run without -PdryRun=true or set DRY_RUN=false");
-
-            // Save contract hash to file if specified (even in dry run)
-            if (hashFile != null && !hashFile.isEmpty()) {
-                Files.write(Paths.get(hashFile), contractHash.toString().getBytes());
-                logger.info("Contract hash saved to: {}", hashFile);
-            }
+            logger.info("To actually set the message bridge, run without -PdryRun=true or set DRY_RUN=false");
             return;
         }
 
         // Sign and send transaction
-        logger.info("Signing deployment transaction...");
+        logger.info("Signing setMessageBridge transaction...");
         io.neow3j.transaction.Transaction tx = builder.sign();
         
         // Log transaction details before sending
@@ -235,16 +155,13 @@ public class DeployOracleProxy {
         
         NeoSendRawTransaction response = tx.send();
         if (response.hasError()) {
-            logger.error("Failed to send deployment transaction: {}", response.getError().getMessage());
-            throw new RuntimeException("Failed to send deployment transaction: " + response.getError().getMessage());
+            logger.error("Failed to send setMessageBridge transaction: {}", response.getError().getMessage());
+            throw new RuntimeException("Failed to send setMessageBridge transaction: " + response.getError().getMessage());
         }
 
-        logger.info("Deployment transaction sent successfully: {}", txHash);
+        logger.info("SetMessageBridge transaction sent successfully: {}", txHash);
 
         // Wait for transaction to be included in a block.
-        // getTransaction returns the TX from the mempool before it is mined, but
-        // getApplicationLog only works once the TX is in a confirmed block.
-        // We check getBlockHash() != null to ensure it has been mined.
         logger.info("Waiting for transaction confirmation (max 60 seconds)...");
         io.neow3j.protocol.core.response.Transaction confirmedTx = null;
         int maxAttempts = 60;
@@ -276,42 +193,38 @@ public class DeployOracleProxy {
             if (execution.getState() == NeoVMStateType.FAULT) {
                 String error = execution.getException() != null ? execution.getException() : "Unknown error";
                 logger.info("");
-                logger.info("=== DEPLOYMENT FAILED ===");
+                logger.info("=== SET MESSAGE BRIDGE FAILED ===");
                 logger.info("TX Hash:    {}", txHash);
                 logger.info("VM State:   {}", execution.getState());
                 logger.info("Exception:  {}", error);
-                throw new RuntimeException("Deployment failed: " + error);
+                throw new RuntimeException("SetMessageBridge failed: " + error);
             }
             logger.info("");
-            logger.info("=== DEPLOYMENT SUCCESSFUL ===");
+            logger.info("=== SET MESSAGE BRIDGE SUCCESSFUL ===");
             logger.info("TX Hash:         {}", txHash);
             logger.info("VM State:        {}", execution.getState());
             long gasConsumedRaw = Long.parseLong(execution.getGasConsumed());
             logger.info("GAS Consumed:    {} GAS ({})", String.format("%.8f", gasConsumedRaw / 1e8), gasConsumedRaw);
             logger.info("Contract Hash:   {}", contractHash);
             logger.info("Contract Address:{}", contractHash.toAddress());
+            logger.info("Message Bridge:  {} ({})", messageBridge, messageBridge.toAddress());
             logger.info("Notifications:   {}", execution.getNotifications().size());
         } else {
             logger.info("");
-            logger.info("=== DEPLOYMENT SUCCESSFUL ===");
+            logger.info("=== SET MESSAGE BRIDGE SUCCESSFUL ===");
             logger.info("TX Hash:         {}", txHash);
             logger.info("Contract Hash:   {}", contractHash);
             logger.info("Contract Address:{}", contractHash.toAddress());
+            logger.info("Message Bridge:  {} ({})", messageBridge, messageBridge.toAddress());
             logger.warn("Note: Application log not available - some details may be missing");
-        }
-
-        // Save contract hash to file if specified
-        if (hashFile != null && !hashFile.isEmpty()) {
-            Files.write(Paths.get(hashFile), contractHash.toString().getBytes());
-            logger.info("");
-            logger.info("Contract hash saved to: {}", hashFile);
         }
         
         logger.info("");
-        logger.info("=== Deployment Summary ===");
-        logger.info("Contract deployed successfully!");
+        logger.info("=== Set Message Bridge Summary ===");
+        logger.info("Message bridge set successfully!");
         logger.info("Contract Hash:   {}", contractHash);
         logger.info("Contract Address:{}", contractHash.toAddress());
+        logger.info("Message Bridge:  {} ({})", messageBridge, messageBridge.toAddress());
         logger.info("Transaction:     {}", txHash);
         logger.info("");
     }
