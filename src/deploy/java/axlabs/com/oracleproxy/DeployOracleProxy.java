@@ -33,7 +33,7 @@ import java.nio.file.Paths;
  * 3. .env file in the project root
  *
  * Usage:
- *   ./gradlew deploy -Powner=<owner_address> -PexecutionManager=<execution_manager_address> [-PmessageBridge=<message_bridge_address>] [-PnativeBridge=<native_bridge_address>] [-PwalletPath=<wallet_path>] [-PwalletPassword=<wallet_password>] [-PrpcUrl=<rpc_url>] [-PdryRun=true]
+ *   ./gradlew deploy -Powner=<owner_address> -PexecutionManager=<execution_manager_address> [-PmessageBridge=<message_bridge_address>] [-PnativeBridge=<native_bridge_address>] [-PevmOracleProxy=<evm_oracle_proxy_20_byte_hex>] [-PwalletPath=<wallet_path>] [-PwalletPassword=<wallet_password>] [-PrpcUrl=<rpc_url>] [-PdryRun=true]
  *
  * Addresses can be provided in two formats:
  *   - Neo address: N... (e.g., NRozNKnv4aSMEUL3KyD4UyeHoiPdLpi4y6)
@@ -44,6 +44,7 @@ import java.nio.file.Paths;
  *   N3_EXECUTION_MANAGER=<execution_manager_address>  # Required (Neo address or hex hash)
  *   N3_MESSAGE_BRIDGE=<message_bridge_address>  # Optional (Neo address or hex hash)
  *   N3_NATIVE_BRIDGE=<native_bridge_address>  # Optional (Neo address or hex hash)
+ *   EVM_ORACLE_PROXY_ADDRESS=<evm_oracle_proxy_20_byte_hex>  # Optional (0x + 40 hex chars, can be set later via setEvmOracleProxy())
  *   WALLET_FILEPATH_DEPLOYER=<wallet_path>
  *   WALLET_PASSWORD_DEPLOYER=<wallet_password>  # Optional
  *   N3_JSON_RPC=<rpc_url>  # Optional, defaults to http://localhost:40332
@@ -79,6 +80,7 @@ public class DeployOracleProxy {
         String messageBridge = getConfig("messageBridge", "N3_MESSAGE_BRIDGE", false);
         String nativeBridge = getConfig("nativeBridge", "N3_NATIVE_BRIDGE", false);
         String executionManager = getConfig("executionManager", "N3_EXECUTION_MANAGER", true);
+        String evmOracleProxy = getConfig("evmOracleProxy", "EVM_ORACLE_PROXY_ADDRESS", false);
         String walletPath = getConfig("walletPath", "WALLET_FILEPATH_DEPLOYER", true);
         String walletPassword = getConfig("walletPassword", "WALLET_PASSWORD_DEPLOYER", false);
         String rpcUrl = getConfig("rpcUrl", "N3_JSON_RPC", false);
@@ -105,6 +107,11 @@ public class DeployOracleProxy {
             logger.info("Native Bridge: {}", nativeBridge);
         } else {
             logger.info("Native Bridge: (not set - can be set later via setNativeBridge())");
+        }
+        if (evmOracleProxy != null && !evmOracleProxy.isEmpty()) {
+            logger.info("EVM Oracle Proxy: {}", evmOracleProxy);
+        } else {
+            logger.info("EVM Oracle Proxy: (not set - can be set later via setEvmOracleProxy())");
         }
 
         // Connect to Neo3 network
@@ -162,24 +169,27 @@ public class DeployOracleProxy {
         }
 
         // Create deployment data struct
-        // The DeploymentData struct has 4 Hash160 fields: owner, nativeBridge, messageBridge, executionManager
-        // Use zero hash for optional bridges if not provided
+        // DeploymentData: owner, nativeBridge, messageBridge, executionManager, evmOracleProxy (ByteString 20 bytes)
+        // Use zero hash for optional bridges if not provided; use 20 zero bytes for evmOracleProxy if not provided
         Hash160 finalNativeBridge = nativeBridgeHash != null ? nativeBridgeHash : Hash160.ZERO;
         Hash160 finalMessageBridge = messageBridgeHash != null ? messageBridgeHash : Hash160.ZERO;
-        
+        byte[] evmOracleProxyBytes = parseEvmAddress20(evmOracleProxy);
+
         logger.info("");
         logger.info("=== Deployment Data ===");
         logger.info("Owner:             {} ({})", owner, owner.toAddress());
         logger.info("Native Bridge:     {} ({})", finalNativeBridge, finalNativeBridge.toAddress());
         logger.info("Message Bridge:    {} ({})", finalMessageBridge, finalMessageBridge.toAddress());
         logger.info("Execution Manager: {} ({})", executionManagerHash, executionManagerHash.toAddress());
+        logger.info("EVM Oracle Proxy: {} (20 bytes)", evmOracleProxy != null && !evmOracleProxy.isEmpty() ? evmOracleProxy : "(zeros - set later via setEvmOracleProxy())");
         logger.info("");
-        
+
         io.neow3j.types.ContractParameter deploymentData = io.neow3j.types.ContractParameter.array(
                 io.neow3j.types.ContractParameter.hash160(owner),
                 io.neow3j.types.ContractParameter.hash160(finalNativeBridge),
                 io.neow3j.types.ContractParameter.hash160(finalMessageBridge),
-                io.neow3j.types.ContractParameter.hash160(executionManagerHash)
+                io.neow3j.types.ContractParameter.hash160(executionManagerHash),
+                io.neow3j.types.ContractParameter.byteArray(evmOracleProxyBytes)
         );
 
         // Build deployment transaction using ContractManagement.
@@ -370,8 +380,38 @@ public class DeployOracleProxy {
             }
             return new Hash160(input);
         } catch (Exception e) {
-            throw new IllegalArgumentException("Invalid hash format for " + paramName + ": " + input + 
+            throw new IllegalArgumentException("Invalid hash format for " + paramName + ": " + input +
                     " (expected Neo address starting with N/A or hex hash)", e);
+        }
+    }
+
+    /**
+     * Parse a 20-byte EVM address from hex string (0x + 40 hex chars).
+     * Returns 20 zero bytes if input is null or empty (contract can set later via setEvmOracleProxy).
+     */
+    private static byte[] parseEvmAddress20(String input) {
+        if (input == null || input.trim().isEmpty()) {
+            return new byte[20];
+        }
+        input = input.trim();
+        if (!input.startsWith("0x") && !input.startsWith("0X")) {
+            input = "0x" + input;
+        }
+        if (input.length() != 42) {
+            throw new IllegalArgumentException("EVM_ORACLE_PROXY_ADDRESS must be 20 bytes (0x + 40 hex chars), got " + (input.length() - 2) + " hex chars");
+        }
+        try {
+            String hex = input.substring(2);
+            if (hex.length() != 40) {
+                throw new IllegalArgumentException("EVM_ORACLE_PROXY_ADDRESS must be exactly 20 bytes (40 hex chars)");
+            }
+            byte[] bytes = new byte[20];
+            for (int i = 0; i < 20; i++) {
+                bytes[i] = (byte) Integer.parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+            }
+            return bytes;
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Invalid EVM_ORACLE_PROXY_ADDRESS hex: " + input, e);
         }
     }
 }
