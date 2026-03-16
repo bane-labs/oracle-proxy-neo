@@ -78,7 +78,6 @@ public class OracleProxy {
     // Native Oracle contract - no need to set address manually
     public static final OracleContract oracle = new OracleContract();
     public static final StdLib stdLib = new StdLib();
-    public static final CryptoLib cryptoLib = new CryptoLib();
 
     // Events
     @DisplayName("OracleRequested")
@@ -110,9 +109,9 @@ public class OracleProxy {
      */
     public static class OracleResult {
         public int requestId;
+        public int gasOracleResponseReturn;
         public int code;
         public ByteString result;
-        public int gasOracleResponseReturn;
     }
 
     /**
@@ -169,7 +168,7 @@ public class OracleProxy {
             abort("NativeBridge hash not configured");
         }
 
-        BridgeInterface bridge = new BridgeInterface(bridgeHash);
+        NativeBridgeInterface bridge = new NativeBridgeInterface(bridgeHash);
         bridge.claimNative(nonce);
 
         // Build userData struct so the Oracle callback receives both requestId
@@ -181,12 +180,14 @@ public class OracleProxy {
 
         oracle.request(url, filter, "onOracleResponse", serializedUserData, gasForOracle);
 
+        onOracleRequested.fire(requestId, url);
+
         // Refund the transaction executor for the cost of running this request
         Signer[] signers = Runtime.currentSigners();
         Hash160 txSender = signers[0].account;
-        new GasToken().transfer(getExecutingScriptHash(), txSender, gasOracleRequestExec, null);
-
-        onOracleRequested.fire(requestId, url);
+        if (!new GasToken().transfer(getExecutingScriptHash(), txSender, gasOracleRequestExec, null)) {
+            abort("Failed to refund Gas");
+        }
 
         return requestId;
     }
@@ -196,7 +197,7 @@ public class OracleProxy {
      * This is called by the Oracle contract when the request is fulfilled.
      * 
      * @param url The URL that was requested
-     * @param userData Serialized OracleUserData struct (contains requestId and gasOracleResponseReturn)
+     * @param userData Serialized OracleUserData struct (contains requestId and gasOracleResponseReturn) N3 Oracle contract can only callback the initiator of the oracle call, therefore we can trust this data.
      * @param responseCode The response code (0 = success)
      * @param response The Oracle response result as ByteString
      */
@@ -213,9 +214,9 @@ public class OracleProxy {
 
         OracleResult oracleResult = new OracleResult();
         oracleResult.requestId = requestId;
+        oracleResult.gasOracleResponseReturn = userDataStruct.gasOracleResponseReturn;
         oracleResult.code = responseCode;
         oracleResult.result = response;
-        oracleResult.gasOracleResponseReturn = userDataStruct.gasOracleResponseReturn;
 
         ByteString serialized = stdLib.serialize(oracleResult);
         resultMap.put(requestId, serialized);
@@ -244,8 +245,8 @@ public class OracleProxy {
         List<ByteString> callDynamicData = new List<>();
         callDynamicData.add(EvmSerializerLib.encodeString(resultString));
 
-        ByteString evmCalldata = EvmSerializerLib.encodeFunctionCallWithDynamic(
-                cryptoLib, ON_ORACLE_RESULT_SIG, callParams, callDynamicIndices, callDynamicData);
+        ByteString evmCalldata = EvmSerializerLib.encodeFunctionCallWithDynamic(new CryptoLib(),
+                ON_ORACLE_RESULT_SIG, callParams, callDynamicIndices, callDynamicData);
 
         return EvmSerializerLib.encodeAmbTypesCall(evmTargetAddress, false, 0, evmCalldata);
     }
@@ -294,9 +295,9 @@ public class OracleProxy {
         if (resultBytes == null) {
             OracleResult emptyResult = new OracleResult();
             emptyResult.requestId = requestId;
+            emptyResult.gasOracleResponseReturn = 0;
             emptyResult.code = 0xff;
             emptyResult.result = new ByteString("");
-            emptyResult.gasOracleResponseReturn = 0;
             return emptyResult;
         }
 
@@ -339,7 +340,9 @@ public class OracleProxy {
         // Refund the transaction executor for the cost of sending the response back
         Signer[] signers = Runtime.currentSigners();
         Hash160 txSender = signers[0].account;
-        new GasToken().transfer(getExecutingScriptHash(), txSender, oracleResult.gasOracleResponseReturn, null);
+        if (!new GasToken().transfer(getExecutingScriptHash(), txSender, oracleResult.gasOracleResponseReturn, null)) {
+            abort("Failed to refund Gas");
+        }
 
         if (oracleResult.requestId != requestId) {
             abort("RequestId mismatch");
@@ -404,11 +407,6 @@ public class OracleProxy {
                 abort("Invalid owner");
             }
             baseMap.put(KEY_OWNER, deployData.owner);
-            
-            // Owner must witness the deployment
-            if (!checkWitness(owner())) {
-                abort("Owner must witness the deployment");
-            }
             
             // Set native bridge if provided
             if (deployData.nativeBridge != null && Hash160.isValid(deployData.nativeBridge) && !deployData.nativeBridge.isZero()) {
@@ -641,8 +639,8 @@ public class OracleProxy {
     /**
      * Interface for calling Bridge contract methods
      */
-    private static class BridgeInterface extends ContractInterface {
-        public BridgeInterface(Hash160 contractHash) {
+    private static class NativeBridgeInterface extends ContractInterface {
+        public NativeBridgeInterface(Hash160 contractHash) {
             super(contractHash);
         }
 
