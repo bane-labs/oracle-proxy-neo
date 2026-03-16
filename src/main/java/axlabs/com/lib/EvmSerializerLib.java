@@ -392,6 +392,19 @@ public class EvmSerializerLib {
         return new ByteString(concat(outerOffset.toByteArray(), ambTuple.toByteArray()));
     }
 
+    /**
+     * Overload that accepts a {@link Hash160} target address directly.
+     * The Hash160 bytes are used as-is (no endianness reversal), since EVM addresses
+     * stored via the deploy script are already in big-endian byte order.
+     *
+     * @see #encodeAmbTypesCall(ByteString, boolean, int, ByteString)
+     */
+    public static ByteString encodeAmbTypesCall(Hash160 evmTargetAddress, boolean allowFailure,
+                                                 int value, ByteString callData) {
+        return encodeAmbTypesCall(new ByteString(evmTargetAddress.toByteArray()),
+                allowFailure, value, callData);
+    }
+
     // =========================================================================
     //                     APPEND ARG (GAS-EFFICIENT PATTERN)
     // =========================================================================

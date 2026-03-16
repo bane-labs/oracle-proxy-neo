@@ -93,16 +93,12 @@ public class OracleProxy {
     static Event3Args<Integer, String, String> onOracleResponseStored;
 
     @DisplayName("OracleResponseExecuted")
-    @EventParameterNames({"RequestId"})
-    static Event1Arg<Integer> onOracleResponseExecuted;
+    @EventParameterNames({"RequestId", "MessageNonce"})
+    static Event2Args<Integer, Integer> onOracleResponseExecuted;
 
     @DisplayName("MessageTooLarge")
     @EventParameterNames({"RequestId", "MessageSize", "MaxSize"})
     static Event3Args<Integer, Integer, Integer> onMessageTooLarge;
-
-    @DisplayName("MessageBridgeSent")
-    @EventParameterNames({"RequestId", "MessageNonce"})
-    static Event2Args<Integer, Integer> onMessageBridgeSent;
 
     /**
      * Struct to store Oracle result
@@ -141,7 +137,6 @@ public class OracleProxy {
      * 
      * @param url The URL to request data from
      * @param filter JSONPath filter (can be empty string)
-     * @param callbackContract The contract hash to receive the callback (this contract)
      * @param callbackMethod The method name for the callback
      * @param gasForOracle GAS amount for Oracle callback execution
      * @param gasOracleRequestExec GAS to refund the executor of this request transaction
@@ -153,7 +148,6 @@ public class OracleProxy {
     public static int requestOracleData(
             String url,
             String filter,
-            Hash160 callbackContract,
             String callbackMethod,
             int gasForOracle,
 	        int gasOracleRequestExec,
@@ -163,11 +157,9 @@ public class OracleProxy {
     ) {
         onlyExecutionManager();
         // Claim native tokens from the bridge using the provided nonce
-        Hash160 bridgeHash = baseMap.getHash160(KEY_NATIVE_BRIDGE);
-        if (bridgeHash == null || bridgeHash.isZero()) {
-            abort("NativeBridge hash not configured");
-        }
+        Hash160 bridgeHash = getNativeBridge();
 
+        // TODO, since anyone can claim, this could fail, needs to be fixed when there's a way to verify that a claim is still available.
         NativeBridgeInterface bridge = new NativeBridgeInterface(bridgeHash);
         bridge.claimNative(nonce);
 
@@ -225,48 +217,76 @@ public class OracleProxy {
     }
 
     /**
-     * Builds the full AMBTypes.Call-wrapped message for {@code onOracleResult(uint256, uint256, string)}.
+     * Builds the full AMBTypes.Call-wrapped message for
+     * {@code onOracleResult(uint256 requestId, uint256 responseCode, string oracleResult)}
+     * on the EVM OracleProxy contract.
+     *
+     * <h3>ABI encoding layout</h3>
+     * <p>Solidity's ABI encodes fixed-size parameters (uint256) inline at their positional
+     * slot (32 bytes each), but dynamic types (string, bytes, arrays) use an indirection
+     * pattern: the positional slot holds an <em>offset</em> pointing to the location in the
+     * tail section where the actual data lives (length-prefixed).</p>
+     *
+     * <p>For {@code onOracleResult(uint256, uint256, string)} the wire format is:</p>
+     * <pre>
+     *   [4-byte selector]
+     *   slot 0: requestId                         (uint256, inline)
+     *   slot 1: responseCode                      (uint256, inline)
+     *   slot 2: offset to oracleResult data        (uint256, placeholder — filled by encoder)
+     *   --- tail section ---
+     *   slot 3: length of oracleResult string      (uint256)
+     *   slot 4+: UTF-8 bytes of oracleResult       (padded to 32-byte boundary)
+     * </pre>
+     *
+     * <p>The zero placeholder at index 2 in {@code callParams} reserves the positional slot.
+     * {@code encodeFunctionCallWithDynamic} knows (via {@code callDynamicIndices}) that
+     * index 2 is dynamic: it replaces the zero with the correct byte offset to the tail
+     * section, then appends the length-prefixed string data from {@code callDynamicData}
+     * after all fixed slots.</p>
+     *
+     * <p>Finally, the encoded calldata is wrapped in an {@code AMBTypes.Call} struct so the
+     * message bridge's execution manager can route it to the target contract on EVM.</p>
      *
      * @param requestId        The Oracle request ID
-     * @param responseCode     The response code (Oracle code or custom)
-     * @param resultString     The oracle result string (may be empty)
-     * @param evmTargetAddress 20-byte big-endian EVM target address
+     * @param responseCode     The response code (Oracle code, or custom e.g. MESSAGE_TOO_LARGE)
+     * @param resultString     The oracle result string (may be empty on error)
+     * @param evmOracleProxy 20-byte big-endian EVM address of the OracleProxy contract
      * @return The ABI-encoded AMBTypes.Call message ready to send via the message bridge
      */
     private static ByteString buildOracleResultMessage(
-            int requestId, int responseCode, String resultString, ByteString evmTargetAddress) {
-        List<ByteString> callParams = new List<>();
-        callParams.add(EvmSerializerLib.encodeUint256(requestId));      // _requestId
-        callParams.add(EvmSerializerLib.encodeUint256(responseCode));   // responseCode
-        callParams.add(EvmSerializerLib.encodeUint256(0));              // _oracleResult (dynamic placeholder)
+            int requestId, int responseCode, String resultString, Hash160 evmOracleProxy) {
 
+        // Fixed params: two uint256 values inline, plus a placeholder for the dynamic offset
+        List<ByteString> callParams = new List<>();
+        callParams.add(EvmSerializerLib.encodeUint256(requestId));
+        callParams.add(EvmSerializerLib.encodeUint256(responseCode));
+        callParams.add(EvmSerializerLib.encodeUint256(0)); // slot 2: replaced with tail offset by encoder
+
+        // Index 2 is the dynamic parameter (the string)
         int[] callDynamicIndices = new int[]{2};
 
+        // The actual dynamic data: the ABI-encoded string (length + padded UTF-8 bytes)
         List<ByteString> callDynamicData = new List<>();
         callDynamicData.add(EvmSerializerLib.encodeString(resultString));
 
         ByteString evmCalldata = EvmSerializerLib.encodeFunctionCallWithDynamic(new CryptoLib(),
                 ON_ORACLE_RESULT_SIG, callParams, callDynamicIndices, callDynamicData);
 
-        return EvmSerializerLib.encodeAmbTypesCall(evmTargetAddress, false, 0, evmCalldata);
+        return EvmSerializerLib.encodeAmbTypesCall(evmOracleProxy, false, 0, evmCalldata);
     }
 
     /**
      * Sends a pre-built EVM call back to EVM via the message bridge as an executable message.
-     * The call is expected to be an ABI-encoded AMBTypes.Call targeting ExampleBridge.onOracleResult.
-     * Fires a {@code MessageBridgeSent} event with the Oracle request ID and the message nonce
-     * assigned by the message bridge.
+     * The call is expected to be an ABI-encoded AMBTypes.Call targeting the EVM OracleProxy's
+     * {@code onOracleResult}.
      *
-     * @param requestId         The Oracle request ID (emitted in the event for traceability)
      * @param serializedEvmCall The ABI-encoded EVM call (AMBTypes.Call struct)
      * @param messageBridgeHash The message bridge contract hash
+     * @param sendingFee        The fee for sending the message
+     * @return The message nonce assigned by the message bridge
      */
-    private static void sendResultViaMessageBridge(int requestId, ByteString serializedEvmCall, Hash160 messageBridgeHash) {
-        // Call message bridge using ContractInterface
+    private static int sendResultViaMessageBridge(ByteString serializedEvmCall, Hash160 messageBridgeHash, int sendingFee) {
         MessageBridgeInterface messageBridge = new MessageBridgeInterface(messageBridgeHash);
-
-        // Get sending fee
-        int sendingFee = messageBridge.sendingFee();
 
         // Use the first transaction signer as the feeSponsor.
         // GasToken.transfer(feeSponsor, ...) internally calls checkWitness(feeSponsor),
@@ -275,13 +295,7 @@ public class OracleProxy {
         Signer[] signers = Runtime.currentSigners();
         Hash160 feeSponsor = signers[0].account;
 
-        // Send as executable message so the EVM bridge will call onOracleResult directly.
-        // Capture the nonce assigned by the message bridge.
-        int messageNonce = messageBridge.sendExecutableMessage(serializedEvmCall, false, feeSponsor, sendingFee);
-
-        // Emit event so watchers (e.g. bridgeman) can link this Oracle request to the
-        // outgoing message bridge nonce.
-        onMessageBridgeSent.fire(requestId, messageNonce);
+        return messageBridge.sendExecutableMessage(serializedEvmCall, false, feeSponsor, sendingFee);
     }
 
     /**
@@ -290,25 +304,18 @@ public class OracleProxy {
      * @param requestId The Oracle request ID
      * @return The Oracle result
      */
+    @Safe
     public static OracleResult getOracleResult(int requestId) {
         ByteString resultBytes = resultMap.get(requestId);
         if (resultBytes == null) {
-            OracleResult emptyResult = new OracleResult();
-            emptyResult.requestId = requestId;
-            emptyResult.gasOracleResponseReturn = 0;
-            emptyResult.code = 0xff;
-            emptyResult.result = new ByteString("");
-            return emptyResult;
+            abort("No oracle result found for requestId");
         }
 
         // Deserialize the stored result
         // We know it's an OracleResult since we store it that way
         OracleResult result = (OracleResult) stdLib.deserialize(resultBytes);
         
-        // Ensure requestId matches (safety check)
-        if (result.requestId != requestId) {
-            result.requestId = requestId;
-        }
+        assert requestId == result.requestId : "requestId does not match result";
         
         return result;
     }
@@ -323,19 +330,11 @@ public class OracleProxy {
      *
      * @param requestId        The Oracle request ID (must have a stored result)
      */
-    public static void sendOracleResponse(int requestId) {
+    public static void sendOracleResponse(int requestId, int sendingFee) {
         // Validate that a result exists for this request ID
-        ByteString storedResultBytes = resultMap.get(requestId);
-        if (storedResultBytes == null) {
-            abort("Oracle result not found");
-        }
+        OracleResult oracleResult = getOracleResult(requestId);
 
-        ByteString evmTargetAddress = baseMap.get(KEY_EVM_ORACLE_PROXY);
-        if (evmTargetAddress == null || evmTargetAddress.length() != 20) {
-            abort("Invalid EVM target address (expected 20 bytes)");
-        }
-
-        OracleResult oracleResult = (OracleResult) stdLib.deserialize(storedResultBytes);
+        Hash160 evmOracleProxy = getEvmOracleProxy();
 
         // Refund the transaction executor for the cost of sending the response back
         Signer[] signers = Runtime.currentSigners();
@@ -344,32 +343,28 @@ public class OracleProxy {
             abort("Failed to refund Gas");
         }
 
-        if (oracleResult.requestId != requestId) {
-            abort("RequestId mismatch");
-        }
+        assert oracleResult.requestId == requestId : "RequestId mismatch";
 
         ByteString rawMessage = buildOracleResultMessage(
-                oracleResult.requestId, oracleResult.code, oracleResult.result.toString(), evmTargetAddress);
+                oracleResult.requestId, oracleResult.code, oracleResult.result.toString(), evmOracleProxy);
 
-        Hash160 messageBridgeHash = baseMap.getHash160(KEY_MESSAGE_BRIDGE);
-        if (messageBridgeHash == null || messageBridgeHash.isZero()) {
-            abort("Message bridge hash not set");
-        }
+        Hash160 messageBridge = getMessageBridge();
 
-        MessageBridgeInterface messageBridge = new MessageBridgeInterface(messageBridgeHash);
-        int maxSize = messageBridge.maxMessageSize();
+        MessageBridgeInterface messageBridgeInterface = new MessageBridgeInterface(messageBridge);
+        int maxSize = messageBridgeInterface.maxMessageSize();
         int messageSize = rawMessage.length();
 
-        if (maxSize > 0 && messageSize > maxSize) {
-            // Message exceeds bridge limit — re-encode with custom response code and empty result
+        
+        // If result cannot be sent due to its size, re-encode result with custom response code and empty body
+        if (messageSize > maxSize) {
             onMessageTooLarge.fire(oracleResult.requestId, messageSize, maxSize);
             rawMessage = buildOracleResultMessage(
-                    oracleResult.requestId, RESPONSE_CODE_MESSAGE_TOO_LARGE, "", evmTargetAddress);
+                    oracleResult.requestId, RESPONSE_CODE_MESSAGE_TOO_LARGE, "", evmOracleProxy);
         }
 
-        sendResultViaMessageBridge(requestId, rawMessage, messageBridgeHash);
+        int messageNonce = sendResultViaMessageBridge(rawMessage, messageBridge, sendingFee);
 
-        onOracleResponseExecuted.fire(requestId);
+        onOracleResponseExecuted.fire(requestId, messageNonce);
     }
 
 
@@ -465,8 +460,12 @@ public class OracleProxy {
      * @return The bridge contract hash
      */
     @Safe
-    public static Hash160 getBridge() {
-        return baseMap.getHash160(KEY_NATIVE_BRIDGE);
+    public static Hash160 getNativeBridge() {
+        Hash160 bridge = baseMap.getHash160(KEY_NATIVE_BRIDGE);
+        if (bridge == null || bridge.isZero() || !Hash160.isValid(bridge)) {
+            abort("Bridge not set");
+        }
+        return bridge;
     }
 
     /**
@@ -513,7 +512,11 @@ public class OracleProxy {
      */
     @Safe
     public static Hash160 getMessageBridge() {
-        return baseMap.getHash160(KEY_MESSAGE_BRIDGE);
+        Hash160 messageBridge = baseMap.getHash160(KEY_MESSAGE_BRIDGE);
+        if (messageBridge == null || messageBridge.isZero() || !Hash160.isValid(messageBridge)) {
+            abort("Message bridge not set");
+        }
+        return messageBridge;
     }
 
     /**
@@ -537,7 +540,11 @@ public class OracleProxy {
      */
     @Safe
     public static Hash160 getExecutionManager() {
-        return baseMap.getHash160(KEY_EXECUTION_MANAGER);
+        Hash160 executionManager = baseMap.getHash160(KEY_EXECUTION_MANAGER);
+        if (executionManager == null || executionManager.isZero() || !Hash160.isValid(executionManager)) {
+            abort("Execution manager not set");
+        }
+        return executionManager;
     }
 
     /**
@@ -571,7 +578,11 @@ public class OracleProxy {
      */
     @Safe
     public static Hash160 getEvmOracleProxy() {
-        return baseMap.getHash160(KEY_EVM_ORACLE_PROXY);
+        Hash160 evmOracleProxy = baseMap.getHash160(KEY_EVM_ORACLE_PROXY);
+        if (evmOracleProxy == null || evmOracleProxy.isZero() || !Hash160.isValid(evmOracleProxy)) {
+            abort("EVM Oracle Proxy address not set");
+        }
+        return evmOracleProxy;
     }
 
     /**
@@ -608,10 +619,7 @@ public class OracleProxy {
      * Aborts if not authorized.
      */
     private static void onlyExecutionManager() {
-        Hash160 executionManager = baseMap.getHash160(KEY_EXECUTION_MANAGER);
-        if (executionManager == null || executionManager.isZero()) {
-            abort("Execution manager not set");
-        }
+        Hash160 executionManager = getExecutionManager();
         Hash160 callingScriptHash = getCallingScriptHash();
         if (!callingScriptHash.equals(executionManager)) {
             abort("No authorization - only execution manager");
