@@ -152,13 +152,13 @@ public class OracleProxy {
     ) {
         onlyExecutionManager();
 
-        Hash160 bridgeHash = getTokenBridge();
+        Hash160 tokenBridgeHash = getTokenBridge();
         // TODO, since anyone can claim, this could fail, needs to be fixed when there's a way to verify that a claim is still available.
-        TokenBridgeInterface bridge = new TokenBridgeInterface(bridgeHash);
+        TokenBridgeInterface tokenBridge = new TokenBridgeInterface(tokenBridgeHash);
         // Claim GAS tokens from the token bridge using the provided nonce.
-        // This contract (in the current state) is intended for the use with the bridge to Neo X. On Neo X, GAS is
+        // This contract (in the current state) is intended for the use with the token bridge to Neo X. On Neo X, GAS is
         // the native coin. Thus, the native token bridge is used here for claiming.
-        bridge.claimNative(nonce);
+        tokenBridge.claimNative(nonce);
 
         // Build userData struct so the Oracle callback receives both requestId
         // and the gas amount reserved for the response return trip.
