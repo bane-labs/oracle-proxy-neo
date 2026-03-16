@@ -81,7 +81,7 @@ The Oracle proxy contract provides the following functionality:
 - `getOracleResult()` - Retrieves stored Oracle result for a request ID
 - `executeOracleResponse()` - Executes Oracle response by building and forwarding EVM call
 - `setMessageBridge()` - Sets the message bridge contract address (owner only)
-- `setNativeBridge()` - Sets the native bridge contract address (owner only)
+- `setTokenBridge()` - Sets the token bridge contract address (owner only)
 - `setOwner()` - Sets the contract owner (owner only)
 - `owner()` - Gets the contract owner address
 - `upgrade()` - Upgrades the contract (owner only)
@@ -131,7 +131,7 @@ Set the following environment variables for deployment:
 - `WALLET_PASSWORD_DEPLOYER` - Password for deployer wallet (optional, empty string if no password)
 - `N3_OWNER_ADDRESS` - Owner address for the contract (Neo3 address format)
 - `N3_MESSAGE_BRIDGE_HASH` - Message bridge contract hash (optional)
-- `N3_NATIVE_BRIDGE_HASH` - Native bridge contract hash (optional)
+- `N3_TOKEN_BRIDGE_HASH` - Token bridge contract hash (optional)
 - `N3_HASH_FILE` - Optional path to save contract hash
 
 ### Manual Deployment
@@ -147,7 +147,7 @@ Set the following environment variables for deployment:
    ```java
    DeploymentData {
        Hash160 owner;
-       Hash160 nativeBridge;  // Optional, can be zero
+       Hash160 tokenBridge;  // Optional, can be zero
        Hash160 messageBridge;  // Optional, can be zero
    }
    ```
@@ -172,15 +172,15 @@ After deployment, configure the contract:
    # Call setMessageBridge() method with the message bridge contract hash
 ```
 
-2. **Set Native Bridge Address:**
+2. **Set Token Bridge Address:**
 ```bash
-   # Call setNativeBridge() method with the native bridge contract hash
+   # Call setTokenBridge() method with the token bridge contract hash
 ```
 
 3. **Verify Configuration:**
 ```bash
    # Call getMessageBridge() to verify message bridge is set
-   # Call getBridge() to verify native bridge is set
+   # Call getTokenBridge() to verify token bridge is set
    # Call owner() to verify owner is set
    ```
 
