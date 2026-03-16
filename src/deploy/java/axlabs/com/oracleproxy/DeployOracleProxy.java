@@ -173,7 +173,7 @@ public class DeployOracleProxy {
         // Use zero hash for optional bridges if not provided; use 20 zero bytes for evmOracleProxy if not provided
         Hash160 finalNativeBridge = nativeBridgeHash != null ? nativeBridgeHash : Hash160.ZERO;
         Hash160 finalMessageBridge = messageBridgeHash != null ? messageBridgeHash : Hash160.ZERO;
-        byte[] evmOracleProxyBytes = parseEvmAddress20(evmOracleProxy);
+        Hash160 evmOracleProxyBytes = new Hash160(evmOracleProxy);
 
         logger.info("");
         logger.info("=== Deployment Data ===");
@@ -189,7 +189,7 @@ public class DeployOracleProxy {
                 io.neow3j.types.ContractParameter.hash160(finalNativeBridge),
                 io.neow3j.types.ContractParameter.hash160(finalMessageBridge),
                 io.neow3j.types.ContractParameter.hash160(executionManagerHash),
-                io.neow3j.types.ContractParameter.byteArray(evmOracleProxyBytes)
+                io.neow3j.types.ContractParameter.hash160(evmOracleProxyBytes)
         );
 
         // Build deployment transaction using ContractManagement.
@@ -382,36 +382,6 @@ public class DeployOracleProxy {
         } catch (Exception e) {
             throw new IllegalArgumentException("Invalid hash format for " + paramName + ": " + input +
                     " (expected Neo address starting with N/A or hex hash)", e);
-        }
-    }
-
-    /**
-     * Parse a 20-byte EVM address from hex string (0x + 40 hex chars).
-     * Returns 20 zero bytes if input is null or empty (contract can set later via setEvmOracleProxy).
-     */
-    private static byte[] parseEvmAddress20(String input) {
-        if (input == null || input.trim().isEmpty()) {
-            return new byte[20];
-        }
-        input = input.trim();
-        if (!input.startsWith("0x") && !input.startsWith("0X")) {
-            input = "0x" + input;
-        }
-        if (input.length() != 42) {
-            throw new IllegalArgumentException("EVM_ORACLE_PROXY_ADDRESS must be 20 bytes (0x + 40 hex chars), got " + (input.length() - 2) + " hex chars");
-        }
-        try {
-            String hex = input.substring(2);
-            if (hex.length() != 40) {
-                throw new IllegalArgumentException("EVM_ORACLE_PROXY_ADDRESS must be exactly 20 bytes (40 hex chars)");
-            }
-            byte[] bytes = new byte[20];
-            for (int i = 0; i < 20; i++) {
-                bytes[i] = (byte) Integer.parseInt(hex.substring(i * 2, i * 2 + 2), 16);
-            }
-            return bytes;
-        } catch (Exception e) {
-            throw new IllegalArgumentException("Invalid EVM_ORACLE_PROXY_ADDRESS hex: " + input, e);
         }
     }
 }

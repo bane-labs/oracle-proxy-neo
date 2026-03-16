@@ -52,9 +52,9 @@ import static io.neow3j.devpack.Runtime.getExecutingScriptHash;
 public class OracleProxy {
 
     private static final byte PREFIX_BASE = 0x0a;
-    private static final int KEY_MESSAGE_BRIDGE = 0x01;
-    private static final int KEY_NATIVE_BRIDGE = 0x02;
-    private static final int KEY_OWNER = 0x03;
+    private static final int KEY_OWNER = 0x01;
+    private static final int KEY_MESSAGE_BRIDGE = 0x02;
+    private static final int KEY_NATIVE_BRIDGE = 0x03;
     private static final int KEY_EXECUTION_MANAGER = 0x04;
     private static final int KEY_EVM_ORACLE_PROXY = 0x05;
     private static final int KEY_ORACLE_RESULT = 0x10;
@@ -133,7 +133,7 @@ public class OracleProxy {
         public Hash160 nativeBridge;
         public Hash160 messageBridge;
         public Hash160 executionManager;
-        public ByteString evmOracleProxy;
+        public Hash160 evmOracleProxy;
     }
 
     /**
@@ -427,7 +427,7 @@ public class OracleProxy {
             baseMap.put(KEY_EXECUTION_MANAGER, deployData.executionManager);
 
             // Set EVM Oracle Proxy address if provided (20-byte big-endian EVM address)
-            if (deployData.evmOracleProxy != null && deployData.evmOracleProxy.length() == 20) {
+            if (deployData.evmOracleProxy != null && Hash160.isValid(deployData.evmOracleProxy) && !deployData.evmOracleProxy.isZero()) {
                 baseMap.put(KEY_EVM_ORACLE_PROXY, deployData.evmOracleProxy);
             }
         }
@@ -558,9 +558,9 @@ public class OracleProxy {
      *
      * @param evmOracleProxyAddress 20-byte EVM address of the Oracle Proxy contract
      */
-    public static void setEvmOracleProxy(ByteString evmOracleProxyAddress) {
+    public static void setEvmOracleProxy(Hash160 evmOracleProxyAddress) {
         onlyOwner();
-        if (evmOracleProxyAddress == null || evmOracleProxyAddress.length() != 20) {
+        if (evmOracleProxyAddress == null || !Hash160.isValid(evmOracleProxyAddress) || evmOracleProxyAddress.isZero()) {
             abort("Invalid EVM Oracle Proxy address (expected 20 bytes)");
         }
         baseMap.put(KEY_EVM_ORACLE_PROXY, evmOracleProxyAddress);
@@ -572,8 +572,8 @@ public class OracleProxy {
      * @return The 20-byte EVM address of the Oracle Proxy contract
      */
     @Safe
-    public static ByteString getEvmOracleProxy() {
-        return baseMap.get(KEY_EVM_ORACLE_PROXY);
+    public static Hash160 getEvmOracleProxy() {
+        return baseMap.getHash160(KEY_EVM_ORACLE_PROXY);
     }
 
     /**
