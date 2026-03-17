@@ -33,7 +33,9 @@ import java.nio.file.Paths;
  * 3. .env file in the project root
  *
  * Usage:
- *   ./gradlew deploy -Powner=<owner_address> -PexecutionManager=<execution_manager_address> [-PmessageBridge=<message_bridge_address>] [-PnativeBridge=<native_bridge_address>] [-PevmOracleProxy=<evm_oracle_proxy_20_byte_hex>] [-PwalletPath=<wallet_path>] [-PwalletPassword=<wallet_password>] [-PrpcUrl=<rpc_url>] [-PdryRun=true]
+ *   ./gradlew deploy -Powner=<owner_address> -PexecutionManager=<execution_manager_address>
+ *       [-PmessageBridge=<message_bridge_address>] [-PtokenBridge=<token_bridge_address>]
+ *       [-PevmOracleProxy=<evm_oracle_proxy_20_byte_hex>] [-PwalletPath=<wallet_path>] [-PwalletPassword=<wallet_password>] [-PrpcUrl=<rpc_url>] [-PdryRun=true]
  *
  * Addresses can be provided in two formats:
  *   - Neo address: N... (e.g., NRozNKnv4aSMEUL3KyD4UyeHoiPdLpi4y6)
@@ -43,7 +45,7 @@ import java.nio.file.Paths;
  *   N3_OWNER_ADDRESS=<owner_address>  # Required (Neo address or hex hash)
  *   N3_EXECUTION_MANAGER=<execution_manager_address>  # Required (Neo address or hex hash)
  *   N3_MESSAGE_BRIDGE=<message_bridge_address>  # Optional (Neo address or hex hash)
- *   N3_NATIVE_BRIDGE=<native_bridge_address>  # Optional (Neo address or hex hash)
+ *   N3_TOKEN_BRIDGE=<token_bridge_address>  # Optional (Neo address or hex hash)
  *   EVM_ORACLE_PROXY_ADDRESS=<evm_oracle_proxy_20_byte_hex>  # Optional (0x + 40 hex chars, can be set later via setEvmOracleProxy())
  *   WALLET_FILEPATH_DEPLOYER=<wallet_path>
  *   WALLET_PASSWORD_DEPLOYER=<wallet_password>  # Optional
@@ -78,7 +80,7 @@ public class DeployOracleProxy {
         // Get configuration from system properties, environment variables, or .env file
         String ownerAddress = getConfig("owner", "N3_OWNER_ADDRESS", true);
         String messageBridge = getConfig("messageBridge", "N3_MESSAGE_BRIDGE", false);
-        String nativeBridge = getConfig("nativeBridge", "N3_NATIVE_BRIDGE", false);
+        String tokenBridge = getConfig("tokenBridge", "N3_TOKEN_BRIDGE", false);
         String executionManager = getConfig("executionManager", "N3_EXECUTION_MANAGER", true);
         String evmOracleProxy = getConfig("evmOracleProxy", "EVM_ORACLE_PROXY_ADDRESS", false);
         String walletPath = getConfig("walletPath", "WALLET_FILEPATH_DEPLOYER", true);
@@ -103,10 +105,10 @@ public class DeployOracleProxy {
         } else {
             logger.info("Message Bridge: (not set - can be set later via setMessageBridge())");
         }
-        if (nativeBridge != null && !nativeBridge.isEmpty()) {
-            logger.info("Native Bridge: {}", nativeBridge);
+        if (tokenBridge != null && !tokenBridge.isEmpty()) {
+            logger.info("Token Bridge: {}", tokenBridge);
         } else {
-            logger.info("Native Bridge: (not set - can be set later via setNativeBridge())");
+            logger.info("Token Bridge: (not set - can be set later via setTokenBridge())");
         }
         if (evmOracleProxy != null && !evmOracleProxy.isEmpty()) {
             logger.info("EVM Oracle Proxy: {}", evmOracleProxy);
@@ -160,33 +162,33 @@ public class DeployOracleProxy {
             logger.info("Message bridge: not set (will use zero hash)");
         }
         
-        Hash160 nativeBridgeHash = null;
-        if (nativeBridge != null && !nativeBridge.isEmpty()) {
-            nativeBridgeHash = parseHash160(nativeBridge, "nativeBridge");
-            logger.info("Native bridge hash: {} ({})", nativeBridgeHash, nativeBridgeHash.toAddress());
+        Hash160 tokenBridgeHash = null;
+        if (tokenBridge != null && !tokenBridge.isEmpty()) {
+            tokenBridgeHash = parseHash160(tokenBridge, "tokenBridge");
+            logger.info("Token bridge hash: {} ({})", tokenBridgeHash, tokenBridgeHash.toAddress());
         } else {
-            logger.info("Native bridge: not set (will use zero hash)");
+            logger.info("Token bridge: not set (will use zero hash)");
         }
 
         // Create deployment data struct
-        // DeploymentData: owner, nativeBridge, messageBridge, executionManager, evmOracleProxy (ByteString 20 bytes)
+        // DeploymentData: owner, tokenBridge, messageBridge, executionManager, evmOracleProxy (ByteString 20 bytes)
         // Use zero hash for optional bridges if not provided; use 20 zero bytes for evmOracleProxy if not provided
-        Hash160 finalNativeBridge = nativeBridgeHash != null ? nativeBridgeHash : Hash160.ZERO;
+        Hash160 finalTokenBridge = tokenBridgeHash != null ? tokenBridgeHash : Hash160.ZERO;
         Hash160 finalMessageBridge = messageBridgeHash != null ? messageBridgeHash : Hash160.ZERO;
         Hash160 evmOracleProxyBytes = new Hash160(evmOracleProxy);
 
         logger.info("");
         logger.info("=== Deployment Data ===");
         logger.info("Owner:             {} ({})", owner, owner.toAddress());
-        logger.info("Native Bridge:     {} ({})", finalNativeBridge, finalNativeBridge.toAddress());
+        logger.info("Token Bridge:      {} ({})", finalTokenBridge, finalTokenBridge.toAddress());
         logger.info("Message Bridge:    {} ({})", finalMessageBridge, finalMessageBridge.toAddress());
         logger.info("Execution Manager: {} ({})", executionManagerHash, executionManagerHash.toAddress());
-        logger.info("EVM Oracle Proxy: {} (20 bytes)", evmOracleProxy != null && !evmOracleProxy.isEmpty() ? evmOracleProxy : "(zeros - set later via setEvmOracleProxy())");
+        logger.info("EVM Oracle Proxy:  {} (20 bytes)", evmOracleProxy != null && !evmOracleProxy.isEmpty() ? evmOracleProxy : "(zeros - set later via setEvmOracleProxy())");
         logger.info("");
 
         io.neow3j.types.ContractParameter deploymentData = io.neow3j.types.ContractParameter.array(
                 io.neow3j.types.ContractParameter.hash160(owner),
-                io.neow3j.types.ContractParameter.hash160(finalNativeBridge),
+                io.neow3j.types.ContractParameter.hash160(finalTokenBridge),
                 io.neow3j.types.ContractParameter.hash160(finalMessageBridge),
                 io.neow3j.types.ContractParameter.hash160(executionManagerHash),
                 io.neow3j.types.ContractParameter.hash160(evmOracleProxyBytes)

@@ -2,7 +2,6 @@ package axlabs.com.oracleproxy;
 
 import io.neow3j.devpack.ByteString;
 import io.neow3j.devpack.Hash160;
-import io.neow3j.devpack.Storage;
 import io.neow3j.devpack.StorageMap;
 import io.neow3j.devpack.annotations.CallFlags;
 import io.neow3j.devpack.annotations.DisplayName;
@@ -18,27 +17,23 @@ import io.neow3j.devpack.contracts.CryptoLib;
 import io.neow3j.devpack.contracts.GasToken;
 import io.neow3j.devpack.contracts.OracleContract;
 import io.neow3j.devpack.contracts.StdLib;
-import io.neow3j.devpack.constants.NativeContract;
 import io.neow3j.devpack.events.Event2Args;
 import io.neow3j.devpack.events.Event3Args;
-import io.neow3j.devpack.events.Event1Arg;
 import io.neow3j.devpack.contracts.ContractManagement;
 import io.neow3j.devpack.List;
 import axlabs.com.lib.EvmSerializerLib;
 
 import static io.neow3j.devpack.Helper.abort;
-import static io.neow3j.devpack.Helper.concat;
-import static io.neow3j.devpack.Helper.toByteArray;
 import io.neow3j.devpack.Runtime;
 import io.neow3j.devpack.Signer;
-import io.neow3j.devpack.Transaction;
+
 import static io.neow3j.devpack.Runtime.checkWitness;
 import static io.neow3j.devpack.Runtime.getCallingScriptHash;
 import static io.neow3j.devpack.Runtime.getExecutingScriptHash;
 
 /**
  * Oracle proxy contract for Oracle calls via message bridge.
- * 
+ * <p>
  * This contract:
  * 1. Receives Oracle request calls via message bridge
  * 2. Makes Oracle requests to the native Oracle contract
@@ -47,14 +42,14 @@ import static io.neow3j.devpack.Runtime.getExecutingScriptHash;
  */
 @DisplayName("OracleProxy")
 @ManifestExtra(key = "author", value = "AxLabs")
-@ManifestExtra(key = "description", value = "Oracle proxy contract for Oracle calls via message bridge")
+@ManifestExtra(key = "description", value = "Oracle proxy contract for Oracle calls from Neo X via the MessageBridge")
 @Permission(contract = "*")
 public class OracleProxy {
 
     private static final byte PREFIX_BASE = 0x0a;
     private static final int KEY_OWNER = 0x01;
     private static final int KEY_MESSAGE_BRIDGE = 0x02;
-    private static final int KEY_NATIVE_BRIDGE = 0x03;
+    private static final int KEY_TOKEN_BRIDGE = 0x03;
     private static final int KEY_EXECUTION_MANAGER = 0x04;
     private static final int KEY_EVM_ORACLE_PROXY = 0x05;
     private static final int KEY_ORACLE_RESULT = 0x10;
@@ -125,7 +120,7 @@ public class OracleProxy {
     @Struct
     public static class DeploymentData {
         public Hash160 owner;
-        public Hash160 nativeBridge;
+        public Hash160 tokenBridge;
         public Hash160 messageBridge;
         public Hash160 executionManager;
         public Hash160 evmOracleProxy;
@@ -141,7 +136,7 @@ public class OracleProxy {
      * @param gasForOracle GAS amount for Oracle callback execution
      * @param gasOracleRequestExec GAS to refund the executor of this request transaction
      * @param gasOracleResponseReturn GAS reserved for the response return trip (stored in result, refunded on sendOracleResponse)
-     * @param nonce The native bridge withdrawal nonce to claim
+     * @param nonce The withdrawal nonce of the GAS to claim from the token bridge
      * @param requestId The Oracle request ID assigned by the EVM contract
      * @return The Oracle request ID
      */
@@ -156,12 +151,14 @@ public class OracleProxy {
             int requestId
     ) {
         onlyExecutionManager();
-        // Claim native tokens from the bridge using the provided nonce
-        Hash160 bridgeHash = getNativeBridge();
 
+        Hash160 tokenBridgeHash = getTokenBridge();
         // TODO, since anyone can claim, this could fail, needs to be fixed when there's a way to verify that a claim is still available.
-        NativeBridgeInterface bridge = new NativeBridgeInterface(bridgeHash);
-        bridge.claimNative(nonce);
+        TokenBridgeInterface tokenBridge = new TokenBridgeInterface(tokenBridgeHash);
+        // Claim GAS tokens from the token bridge using the provided nonce.
+        // This contract (in the current state) is intended for the use with the token bridge to Neo X. On Neo X, GAS is
+        // the native coin. Thus, the native token bridge is used here for claiming.
+        tokenBridge.claimNative(nonce);
 
         // Build userData struct so the Oracle callback receives both requestId
         // and the gas amount reserved for the response return trip.
@@ -383,29 +380,30 @@ public class OracleProxy {
 
     /**
      * Deploy function called automatically when contract is deployed.
-     * Sets the owner, native bridge, message bridge, and execution manager during initial deployment.
+     * Sets the owner, token bridge, message bridge, and execution manager during initial deployment.
      * 
-     * @param data Deployment data. Should be a DeploymentData struct with owner, nativeBridge, messageBridge, and executionManager.
+     * @param data Deployment data. Should be a DeploymentData struct with owner, tokenBridge, messageBridge,
+     *             and executionManager.
      * @param isUpdate Whether this is an update (true) or initial deployment (false)
      */
     @OnDeployment
     public static void deploy(Object data, boolean isUpdate) {
         if (!isUpdate) {
-            // On initial deployment, set owner, native bridge, message bridge, and execution manager from deployment data
+            // On initial deployment, set owner, token and message bridge, and execution manager from deployment data.
             if (data == null) {
                 abort("Invalid deployment data - DeploymentData struct required");
             }
             DeploymentData deployData = (DeploymentData) data;
-            
+
             // Validate and set owner
             if (deployData.owner == null || !Hash160.isValid(deployData.owner) || deployData.owner.isZero()) {
                 abort("Invalid owner");
             }
             baseMap.put(KEY_OWNER, deployData.owner);
             
-            // Set native bridge if provided
-            if (deployData.nativeBridge != null && Hash160.isValid(deployData.nativeBridge) && !deployData.nativeBridge.isZero()) {
-                baseMap.put(KEY_NATIVE_BRIDGE, deployData.nativeBridge);
+            // Set token bridge if provided
+            if (deployData.tokenBridge != null && Hash160.isValid(deployData.tokenBridge) && !deployData.tokenBridge.isZero()) {
+                baseMap.put(KEY_TOKEN_BRIDGE, deployData.tokenBridge);
             }
             
             // Set message bridge if provided
@@ -441,29 +439,29 @@ public class OracleProxy {
     }
 
     /**
-     * Sets the bridge contract address.
+     * Sets the token bridge contract address.
      * Only the owner can call this method.
      * 
-     * @param bridgeHash The bridge contract hash
+     * @param bridgeHash The token bridge contract hash
      */
-    public static void setNativeBridge(Hash160 bridgeHash) {
+    public static void setTokenBridge(Hash160 bridgeHash) {
         onlyOwner();
         if (bridgeHash == null || !Hash160.isValid(bridgeHash) || bridgeHash.isZero()) {
             abort("Invalid bridge hash");
         }
-        baseMap.put(KEY_NATIVE_BRIDGE, bridgeHash);
+        baseMap.put(KEY_TOKEN_BRIDGE, bridgeHash);
     }
 
     /**
-     * Gets the bridge contract address.
+     * Gets the token bridge contract address.
      * 
-     * @return The bridge contract hash
+     * @return The token bridge contract hash
      */
     @Safe
-    public static Hash160 getNativeBridge() {
-        Hash160 bridge = baseMap.getHash160(KEY_NATIVE_BRIDGE);
+    public static Hash160 getTokenBridge() {
+        Hash160 bridge = baseMap.getHash160(KEY_TOKEN_BRIDGE);
         if (bridge == null || bridge.isZero() || !Hash160.isValid(bridge)) {
-            abort("Bridge not set");
+            abort("Token Bridge not set");
         }
         return bridge;
     }
@@ -645,10 +643,10 @@ public class OracleProxy {
     }
 
     /**
-     * Interface for calling Bridge contract methods
+     * Interface for calling the TokenBridge contract methods
      */
-    private static class NativeBridgeInterface extends ContractInterface {
-        public NativeBridgeInterface(Hash160 contractHash) {
+    private static class TokenBridgeInterface extends ContractInterface {
+        public TokenBridgeInterface(Hash160 contractHash) {
             super(contractHash);
         }
 
