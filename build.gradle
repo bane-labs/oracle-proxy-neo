@@ -53,82 +53,80 @@ neow3jCompiler {
     className = project.hasProperty('className') ? project.className : "axlabs.com.oracleproxy.OracleProxy"
 }
 
+// Forward Gradle -P project properties as JVM system properties for all JavaExec tasks,
+// so Java code can read them via System.getProperty().
+tasks.withType(JavaExec).configureEach {
+    systemProperties System.getProperties()
+    environment System.getenv()
+    project.properties.each { key, value ->
+        if (value instanceof String) {
+            systemProperty key, value
+        }
+    }
+}
+
 // Allow executing any class that contains a main() method via:
 //   ./gradlew run -PmainClass=your.main.Class
 // (Gradle 7+ uses `mainClass.set(...)` instead of the old `mainClassName` property.)
 tasks.named('run', JavaExec) {
-    if (!project.hasProperty('mainClass')) {
-        throw new GradleException('The "mainClass" property is not specified. Please provide it using -PmainClass=your.main.Class')
-    }
-    // Ensure we can run classes from the deploy sourceset too.
     classpath = sourceSets.deploy.runtimeClasspath
-    mainClass.set(project.property('mainClass').toString())
+    mainClass.set(project.findProperty('mainClass')?.toString() ?: '')
+    doFirst {
+        if (!project.hasProperty('mainClass')) {
+            throw new GradleException('The "mainClass" property is not specified. Please provide it using -PmainClass=your.main.Class')
+        }
+    }
 }
 
 // Deploy task for OracleProxy contract
 task deploy(type: JavaExec) {
     description = 'Deploy the OracleProxy contract with deployment data'
     group = 'deployment'
-
     dependsOn 'neow3jCompile'
-
     classpath = sourceSets.deploy.runtimeClasspath
     mainClass = 'axlabs.com.oracleproxy.DeployOracleProxy'
-
-    // Pass through system properties
-    systemProperties System.getProperties()
-
-    // Pass through environment variables
-    environment System.getenv()
 }
 
 // Upgrade task for OracleProxy contract
 task upgrade(type: JavaExec) {
     description = 'Upgrade the already-deployed OracleProxy contract (requires -PcontractHash=<hash>)'
     group = 'deployment'
-
     dependsOn 'neow3jCompile'
-
     classpath = sourceSets.deploy.runtimeClasspath
     mainClass = 'axlabs.com.oracleproxy.UpgradeOracleProxy'
-
-    // Pass through system properties
-    systemProperties System.getProperties()
-
-    // Pass through environment variables
-    environment System.getenv()
 }
 
 // SetMessageBridge task for OracleProxy contract
 task setMessageBridge(type: JavaExec) {
     description = 'Set the message bridge address on the deployed OracleProxy contract (reads from .env file)'
     group = 'deployment'
-
     dependsOn 'neow3jCompile'
-
     classpath = sourceSets.deploy.runtimeClasspath
     mainClass = 'axlabs.com.oracleproxy.SetMessageBridge'
-
-    // Pass through system properties
-    systemProperties System.getProperties()
-
-    // Pass through environment variables
-    environment System.getenv()
 }
 
 // SetExecutionManager task for OracleProxy contract
 task setExecutionManager(type: JavaExec) {
     description = 'Set the execution manager address on the deployed OracleProxy contract (reads from .env file)'
     group = 'deployment'
-
     dependsOn 'neow3jCompile'
-
     classpath = sourceSets.deploy.runtimeClasspath
     mainClass = 'axlabs.com.oracleproxy.SetExecutionManager'
+}
 
-    // Pass through system properties
-    systemProperties System.getProperties()
+// GetConfig task – read-only query of all configurable values
+task getConfig(type: JavaExec) {
+    description = 'Print all configured values of the deployed OracleProxy contract (read-only)'
+    group = 'deployment'
+    classpath = sourceSets.deploy.runtimeClasspath
+    mainClass = 'axlabs.com.oracleproxy.GetConfig'
+}
 
-    // Pass through environment variables
-    environment System.getenv()
+// SetEvmOracleProxy task for OracleProxy contract
+task setEvmOracleProxy(type: JavaExec) {
+    description = 'Set the EVM Oracle Proxy address on the deployed OracleProxy contract (reads from .env file)'
+    group = 'deployment'
+    dependsOn 'neow3jCompile'
+    classpath = sourceSets.deploy.runtimeClasspath
+    mainClass = 'axlabs.com.oracleproxy.SetEvmOracleProxy'
 }

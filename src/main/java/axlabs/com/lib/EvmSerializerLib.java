@@ -225,7 +225,7 @@ public class EvmSerializerLib {
         byte[] lengthBytes = toByteArray(length);
         reverse(lengthBytes);
         byte[] paddedLengthBytes = padLeft(lengthBytes, WORD_SIZE);
-        
+	
         // Encode each address (32 bytes each)
         byte[] encodedAddresses = new byte[0];
         for (int i = 0; i < length; i++) {
@@ -390,6 +390,21 @@ public class EvmSerializerLib {
 
         // Prepend outerOffset word (Go abi.Pack wrapping)
         return new ByteString(concat(outerOffset.toByteArray(), ambTuple.toByteArray()));
+    }
+
+    /**
+     * Overload that accepts a {@link Hash160} target address directly.
+     * Hash160 stores bytes in little-endian (Neo native format), so we reverse
+     * to big-endian before encoding as an EVM address.
+     *
+     * @see #encodeAmbTypesCall(ByteString, boolean, int, ByteString)
+     */
+    public static ByteString encodeAmbTypesCall(Hash160 evmTargetAddress, boolean allowFailure,
+                                                 int value, ByteString callData) {
+        byte[] addressBytes = evmTargetAddress.toByteArray();
+        reverse(addressBytes);
+        return encodeAmbTypesCall(new ByteString(addressBytes),
+                allowFailure, value, callData);
     }
 
     // =========================================================================
