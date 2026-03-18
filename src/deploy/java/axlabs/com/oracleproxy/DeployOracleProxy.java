@@ -175,7 +175,9 @@ public class DeployOracleProxy {
         // Use zero hash for optional bridges if not provided; use 20 zero bytes for evmOracleProxy if not provided
         Hash160 finalTokenBridge = tokenBridgeHash != null ? tokenBridgeHash : Hash160.ZERO;
         Hash160 finalMessageBridge = messageBridgeHash != null ? messageBridgeHash : Hash160.ZERO;
-        Hash160 evmOracleProxyBytes = new Hash160(evmOracleProxy);
+        Hash160 evmOracleProxyBytes = (evmOracleProxy != null && !evmOracleProxy.isEmpty())
+                ? parseHash160(evmOracleProxy, "evmOracleProxy")
+                : Hash160.ZERO;
 
         logger.info("");
         logger.info("=== Deployment Data ===");

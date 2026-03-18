@@ -79,7 +79,7 @@ The Oracle proxy contract provides the following functionality:
 - `requestOracleData()` - Makes an Oracle request (called via message bridge)
 - `onOracleResponse()` - Oracle callback handler (called by native Oracle contract)
 - `getOracleResult()` - Retrieves stored Oracle result for a request ID
-- `executeOracleResponse()` - Executes Oracle response by building and forwarding EVM call
+- `sendOracleResponse()` - Sends Oracle response via message bridge to EVM
 - `setMessageBridge()` - Sets the message bridge contract address (owner only)
 - `setTokenBridge()` - Sets the token bridge contract address (owner only)
 - `setOwner()` - Sets the contract owner (owner only)

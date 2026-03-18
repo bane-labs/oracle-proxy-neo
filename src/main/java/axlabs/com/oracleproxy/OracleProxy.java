@@ -53,13 +53,12 @@ public class OracleProxy {
     private static final int KEY_EXECUTION_MANAGER = 0x04;
     private static final int KEY_EVM_ORACLE_PROXY = 0x05;
     private static final int KEY_ORACLE_RESULT = 0x10;
-    private static final int KEY_REQUEST_ID = 0x11;
 
     /**
      * EVM function signature used to compute the on-chain selector.
-     * keccak256("onOracleResult(uint256,uint256,string)")[0:4]
+     * keccak256("persistOracleResult(uint256,uint256,string)")[0:4]
      */
-    private static final String ON_ORACLE_RESULT_SIG = "onOracleResult(uint256,uint256,string)";
+    private static final String ON_ORACLE_RESULT_SIG = "persistOracleResult(uint256,uint256,string)";
 
     /**
      * Custom response code indicating the serialized message exceeds the message bridge's
@@ -161,7 +160,7 @@ public class OracleProxy {
         tokenBridge.claimNative(nonce);
 
         // Build userData struct so the Oracle callback receives both requestId
-        // and the gas amount reserved for the response return trip.
+        // and the gas amount reserved for the response return trip (in N3 fractions).
         OracleUserData oracleUserData = new OracleUserData();
         oracleUserData.requestId = requestId;
         oracleUserData.gasOracleResponseReturn = gasOracleResponseReturn;
@@ -215,7 +214,7 @@ public class OracleProxy {
 
     /**
      * Builds the full AMBTypes.Call-wrapped message for
-     * {@code onOracleResult(uint256 requestId, uint256 responseCode, string oracleResult)}
+     * {@code persistOracleResult(uint256 requestId, uint256 responseCode, string oracleResult)}
      * on the EVM OracleProxy contract.
      *
      * <h3>ABI encoding layout</h3>
@@ -224,7 +223,7 @@ public class OracleProxy {
      * pattern: the positional slot holds an <em>offset</em> pointing to the location in the
      * tail section where the actual data lives (length-prefixed).</p>
      *
-     * <p>For {@code onOracleResult(uint256, uint256, string)} the wire format is:</p>
+     * <p>For {@code persistOracleResult(uint256, uint256, string)} the wire format is:</p>
      * <pre>
      *   [4-byte selector]
      *   slot 0: requestId                         (uint256, inline)
@@ -275,7 +274,7 @@ public class OracleProxy {
     /**
      * Sends a pre-built EVM call back to EVM via the message bridge as an executable message.
      * The call is expected to be an ABI-encoded AMBTypes.Call targeting the EVM OracleProxy's
-     * {@code onOracleResult}.
+     * {@code persistOracleResult}.
      *
      * @param serializedEvmCall The ABI-encoded EVM call (AMBTypes.Call struct)
      * @param messageBridgeHash The message bridge contract hash
@@ -322,7 +321,7 @@ public class OracleProxy {
      * Called by bridgeman after it observes the {@code OracleResponseStored} event.
      *
      * <p>The contract reads the stored Oracle result, builds the EVM calldata for
-     * {@code onOracleResult(uint256, uint256, string)}, wraps it in an {@code AMBTypes.Call}
+     * {@code persistOracleResult(uint256, uint256, string)}, wraps it in an {@code AMBTypes.Call}
      * struct, and forwards it to the message bridge.
      *
      * @param requestId        The Oracle request ID (must have a stored result)
