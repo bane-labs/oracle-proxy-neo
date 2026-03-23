@@ -132,7 +132,15 @@ Set the following environment variables for deployment:
 - `N3_OWNER_ADDRESS` - Owner address for the contract (Neo3 address format)
 - `N3_MESSAGE_BRIDGE_HASH` - Message bridge contract hash (optional)
 - `N3_TOKEN_BRIDGE_HASH` - Token bridge contract hash (optional)
+- `EVM_ORACLE_PROXY_ADDRESS` - EVM Oracle Proxy address (20-byte, `0x` + 40 hex chars; optional, can be set later via `setEvmOracleProxy()`)
 - `N3_HASH_FILE` - Optional path to save contract hash
+
+### Deployed Addresses
+
+| Network | OracleProxy |
+| --- | --- |
+| mainnet | `0x5a0a0f188f2582ad60c1970267df30ec5428100d` |
+| testnet | `0x5a0a0f188f2582ad60c1970267df30ec5428100d` |
 
 ### Manual Deployment
 
