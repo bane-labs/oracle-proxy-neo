@@ -32,7 +32,7 @@ public class GetConfig {
 
     private static final String[] GETTER_FUNCTIONS = {
             "owner",
-            "getNativeBridge",
+            "getTokenBridge",
             "getMessageBridge",
             "getExecutionManager",
             "getEvmOracleProxy",
