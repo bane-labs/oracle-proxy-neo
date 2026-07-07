@@ -8,6 +8,9 @@ build/
 # Gradle Wrapper
 !gradle-wrapper.jar
 
+# Java
+.java-version
+
 # IDE
 .idea/
 *.iml
@@ -24,6 +27,7 @@ Thumbs.db
 
 # Compiled class files
 *.class
+/bin
 
 # Log files
 *.log
